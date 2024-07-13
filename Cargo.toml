@@ -1,0 +1,11 @@
+[package]
+name = "sundae-sync-v2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pallas = { path = "../../pallas" }
+tokio = { version = "1.37", features = ["rt-multi-thread", "macros"] }
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive", "env"] }
+hex = "0.4.3"
