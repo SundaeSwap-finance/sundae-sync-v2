@@ -1,140 +1,115 @@
-use std::path::{Path, PathBuf};
+pub mod args;
+pub mod broadcast;
+pub mod filter;
+pub mod lock;
+pub mod logic;
+pub mod node;
+pub mod u5c;
 
-use anyhow::*;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use aws_config::{meta::region::RegionProviderChain, BehaviorVersion};
+use aws_sdk_dynamodb::Client as DynamoClient;
+use aws_sdk_s3::Client as S3Client;
 use clap::Parser;
-use pallas::{
-    ledger::traverse::{MultiEraBlock, MultiEraTx},
-    network::{
-        facades::NodeClient,
-        miniprotocols::{chainsync::NextResponse, Point},
-    },
-};
+use lock::LockThread;
 
-// An arbitrary predicate to decide whether to save the block or not;
-// fill in with your own purpose built logic
-async fn block_matches<'a>(block: &MultiEraBlock<'a>) -> bool {
-    // As an example, we save any blocks that have an "Update proposal" in any era
-    block.update().is_some() || block.txs().iter().any(|tx| tx.update().is_some())
-}
+use anyhow::Result;
+use args::Args;
+use tokio::{signal, task::JoinSet, time::sleep};
+use tokio_util::sync::CancellationToken;
+use tracing::info;
 
-// An arbitrary predicate to decide whether to save the transaction or not;
-// fill in with your own purpose built logic
-async fn tx_matches<'a>(_tx: &MultiEraTx<'a>) -> bool {
-    false
+async fn worker_thread(
+    lock_id: String,
+    lock_deadline: tokio::sync::watch::Receiver<u64>,
+) -> Result<()> {
+    loop {
+        info!("Lock {} doing work!", lock_id);
+        loop {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_millis() as u64;
+            if now + 5 * 1000 < *lock_deadline.borrow() {
+                info!("Lock {} Work", lock_id)
+            } else {
+                info!("Lock {} not renewed, stalling", lock_id)
+            }
+            sleep(Duration::new(1, 0)).await;
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let cancel = CancellationToken::new();
+    tracing_subscriber::fmt::init();
+    info!("Starting");
 
-    // Connect to the local node over the file socket
-    let mut client = NodeClient::connect(args.socket_path.clone(), args.network_magic)
-        .await
-        .unwrap();
+    let _args = Args::parse();
+    let mut tasks: JoinSet<Result<()>> = JoinSet::new();
 
-    // Find an intersection point using the points on the command line
-    // The response would tell us what point we found, and what the current tip is
-    // which we don't need for this tool
-    let (_, _) = client
-        .chainsync()
-        .find_intersect(args.point.clone())
-        .await?;
+    let region_provider = RegionProviderChain::default_provider().or_else("us-east-2");
+    let config = aws_config::defaults(BehaviorVersion::latest())
+        .region(region_provider)
+        .load()
+        .await;
+    let _s3_client = S3Client::new(&config);
+    let dynamo_client = DynamoClient::new(&config);
 
-    loop {
-        // We either request the next block, or wait until we're told that the block is ready
-        let next = client.chainsync().request_or_await_next().await?;
-        // And depending on the message we receive...
-        match next {
-            // The node will send "RollForward" messages to tell us
-            // about the next block in the sequence; it contains the bytes
-            // of the block, and what the current tip we're advancing towards is
-            NextResponse::RollForward(bytes, _) => {
-                // Decode the block
-                let block = MultiEraBlock::decode(&bytes)?;
-                let slot = block.slot();
-                let height = block.number();
-                let hash = block.hash();
+    let lock_thread = LockThread {
+        lock_duration: Duration::from_secs(20),
+        lock_acquire_freq: Duration::from_secs(5),
+        lock_renew_freq: Duration::from_secs(10),
+        lock_stall_window: Duration::from_secs(5),
+        dynamo: dynamo_client.clone(),
+    };
 
-                if height % 10000 == 0 {
-                    println!("Processed block height {}: {}/{}", height, slot, hash);
-                }
-                // And check each transaction for the predicate, and save if needed
-                for tx in block.txs() {
-                    if tx_matches(&tx).await {
-                        println!("Found matching tx in block {}/{}", slot, hash);
-                        // Make sure we create the out diretory
-                        std::fs::create_dir_all(format!("{}/txs", args.out.to_str().unwrap()))
-                            .context("couldn't create output directory")?;
-                        save_file(args.tx_path(&tx), tx.encode().as_slice())?;
-                    }
-                }
-                // Then, we can check the block as a whole
-                if block_matches(&block).await {
-                    println!("Found matching block {}/{}", slot, hash);
-                    // Make sure we create the out diretory
-                    std::fs::create_dir_all(format!("{}/blocks", args.out.to_str().unwrap()))
-                        .context("couldn't create output directory")?;
-                    let path = args.block_path(&block);
-                    // We drop the block, because the block is
-                    // holding a reference to bytes, which we need to save it
-                    drop(block);
-                    save_file(path, &bytes)?;
-                }
+    {
+        // Cancel our worker thread once we receive a Ctrl+C
+        let cancel = cancel.clone();
+        tasks.spawn(async move {
+            signal::ctrl_c().await?;
+            cancel.cancel();
+            Ok(())
+        });
+    }
+
+    {
+        // Spawn a thread that runs our worker thread
+        let cancel = cancel.clone();
+        tasks.spawn(async move { lock_thread.maintain_lock(cancel, worker_thread).await });
+    }
+
+    while let Some(result) = tasks.join_next().await {
+        match result? {
+            Ok(_) => info!("Task finished succesfully"),
+            Err(err) => {
+                info!("Task finished with error: {:?}", err)
             }
-            // Since we're just scraping data until we catch up, we don't need to handle rollbacks
-            NextResponse::RollBackward(_, _) => {}
-            // Await is returned once we've caught up, and we should let
-            // the node notify us when there's a new block available
-            NextResponse::Await => break,
         }
     }
 
-    Ok(())
-}
+    /*
+    let sundae_sync = SundaeSyncLogic {
+        s3: s3_client,
+        bucket: "preview-529991308818-sundae-sync-v2-test-bucket".to_string(),
+    };
 
-/// A small utility to crawl the Cardano blockchain and save sample data
-#[derive(Parser)]
-struct Args {
-    /// The path to the node.sock file to connect to a local node
-    #[arg(short, long, env("CARDANO_NODE_SOCKET_PATH"))]
-    pub socket_path: String,
-    /// The network magic used to handshake with that node; defaults to mainnet
-    #[arg(short, long, env("CARDANO_NETWORK_MAGIC"), default_value_t = 764824073)]
-    pub network_magic: u64,
-    /// A list of points to use when trying to decide a startpoint; defaults to origin
-    #[arg(short, long, value_parser = parse_point)]
-    pub point: Vec<Point>,
-    /// Download only the first block found that matches this criteria
-    #[arg(long)]
-    pub one: bool,
-    /// The directory to save the files into
-    #[arg(short, long, default_value = "out")]
-    pub out: PathBuf,
-}
-
-impl Args {
-    pub fn tx_path(&self, tx: &MultiEraTx) -> String {
-        format!("{}/txs/{}.cbor", self.out.to_str().unwrap(), tx.hash())
-    }
-    pub fn block_path(&self, block: &MultiEraBlock) -> String {
-        format!(
-            "{}/blocks/{}.cbor",
-            self.out.to_str().unwrap(),
-            block.hash()
+    // Read from either utxorpc, or an ouroboros socket
+    if let Some(utxo_url) = args.utxo_rpc_url {
+        sync_with_utxorpc(sundae_sync, utxo_url, args.point).await?;
+    } else {
+        sync_with_socket(
+            sundae_sync,
+            args.socket_path.unwrap(),
+            args.network_magic.unwrap(),
+            args.point,
         )
+        .await?;
     }
-}
+    */
 
-pub fn parse_point(s: &str) -> Result<Point, Box<dyn std::error::Error + Send + Sync + 'static>> {
-    if s == "origin" {
-        return std::result::Result::Ok(Point::Origin);
-    }
-    let parts: Vec<_> = s.split('/').collect();
-    let slot = parts[0].parse()?;
-    let hash = hex::decode(parts[1])?;
-    std::result::Result::Ok(Point::Specific(slot, hash))
-}
-
-fn save_file<P: AsRef<Path>>(filename: P, bytes: &[u8]) -> Result<()> {
-    std::fs::write(filename, bytes).context("couldn't write file")
+    Ok(())
 }
