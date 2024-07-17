@@ -116,6 +116,10 @@ impl LockThread {
                             // this actually runs the worker future
                             result = &mut task => {
                                 info!("Lock {} Worker failed: {:?}", lock_id, result);
+                                // Release the lock, then sleep for twice as long as our acquire frequency
+                                // to give someone else a good chance of picking up the lock
+                                lock.unwrap().release().await?;
+                                sleep(2 * self.lock_acquire_freq).await;
                                 break;
                             }
                         }
