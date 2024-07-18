@@ -3,13 +3,40 @@
 // use utxorpc::spec::sync::BlockRef;
 
 // use crate::filter::FilterConfig;
+use anyhow::Result;
+use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoClient};
+use serde::{Deserialize, Serialize};
+use serde_dynamo::aws_sdk_dynamodb_1::from_items;
+use utxorpc::spec::sync::BlockRef;
 
-// pub struct Destination {
-//     label: String,
-//     stream_arn: String,
-//     filter: FilterConfig,
-//     point: BlockRef,
-// }
+use crate::filter::FilterConfig;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Destination {
+    pub pk: String,
+    pub sk: String,
+    pub stream_arn: String,
+    pub filter: Option<FilterConfig>,
+    pub point: BlockRef,
+    pub enabled: bool,
+}
+
+pub async fn load_destinations(dynamo: DynamoClient) -> Result<Vec<Destination>> {
+    let resp = dynamo
+        .scan()
+        .consistent_read(true)
+        .filter_expression("pk = :key and enabled = :enabled")
+        .expression_attribute_values(
+            ":key",
+            AttributeValue::S("sundae-sync-v2-destination".into()),
+        )
+        .expression_attribute_values(":enabled", AttributeValue::Bool(true))
+        .table_name("sundae-sync-v2-test-table")
+        .send()
+        .await?;
+
+    Ok(from_items(resp.items().to_vec())?)
+}
 
 // pub struct Broadcaster {
 //     point: BlockRef,

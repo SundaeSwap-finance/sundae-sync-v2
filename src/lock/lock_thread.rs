@@ -1,10 +1,11 @@
-use std::{future::Future, time::Duration};
+use std::time::Duration;
+
+use crate::Worker;
 
 use super::lock::Lock;
 use anyhow::Result;
 use aws_sdk_dynamodb::Client as DynamoClient;
-use std::fmt::Debug;
-use tokio::{select, sync::watch::Receiver, time::sleep};
+use tokio::{select, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -22,16 +23,7 @@ pub struct LockThread {
 
 impl LockThread {
     /// Loops until cancelled, acquiring / renewing a lock, and calling worker_thread while it's open
-    pub async fn maintain_lock<F, FF>(
-        self,
-        cancel: CancellationToken,
-        mut worker_thread: F,
-    ) -> Result<()>
-    where
-        F: FnMut(String, Receiver<u64>) -> FF,
-        FF: Future + Send + 'static,
-        FF::Output: Send + 'static + Debug,
-    {
+    pub async fn maintain_lock(self, cancel: CancellationToken, worker: Worker) -> Result<()> {
         info!("Starting lock thread");
 
         // Make sure there's a safety zone before expiration before we renew
@@ -80,7 +72,7 @@ impl LockThread {
                     // Pin it so it survives async memory reshuffles
                     // Pass it the lock_id, mainly for log messages, and the deadline receiver,
                     // so it knows we're keeping the lock renewed
-                    let mut task = std::pin::pin!(worker_thread(lock_id.clone(), dr));
+                    let mut task = std::pin::pin!(worker.worker_thread(lock_id.clone(), dr));
 
                     // Then, we can sit in a loop
                     loop {
