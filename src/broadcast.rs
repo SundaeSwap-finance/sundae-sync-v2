@@ -1,10 +1,5 @@
-// use aws_sdk_dynamodb::Client as DynamoClient;
-// use aws_sdk_kinesis::Client as KinesisClient;
-// use utxorpc::spec::sync::BlockRef;
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// use crate::filter::FilterConfig;
 use anyhow::Result;
 use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoClient};
 use aws_sdk_kinesis::Client as KinesisClient;
@@ -45,7 +40,7 @@ impl Destination {
         dynamo: &DynamoClient,
         table: &String,
         point: BlockRef,
-        seq_num: String,
+        seq_num: Option<String>,
     ) -> Result<()> {
         // Rotate the point into the list of 15 rollback points
         // TODO: make this more sophisticated, so that we stagger points further and further back
@@ -78,7 +73,7 @@ impl Destination {
                 ":last_point",
                 AttributeValue::S(point_to_string(&previous_point)),
             )
-            .expression_attribute_values(":seq", AttributeValue::S(seq_num))
+            .expression_attribute_values(":seq", seq_num.map_or(AttributeValue::Null(true), |s| AttributeValue::S(s)))
             .expression_attribute_values(":new_point", AttributeValue::S(point_to_string(&point)))
             .expression_attribute_values(":rotated_points", AttributeValue::L(recovery_points))
             .send()
@@ -146,11 +141,20 @@ impl Broadcaster {
         let message_bytes = serde_json::to_vec(&message)?;
         // For each destination
         for destination in &mut self.destinations {
+            let point = message.point();
+            // Ignore this destination if we're further back in the chain
+            if destination.last_seen_point.index > point.index {
+                continue;
+            }
+            // Check if we *should* send to this destination,
+            // based on whether any of the transactions match the criteria
             let applies = destination
                 .filter
                 .as_ref()
                 .map_or(true, |f| f.applies_block(&block));
+            // If so
             if applies {
+                // Check/wait for us to be comfortably within the lock expiration deadline
                 self.deadline
                     .wait_for(|deadline| {
                         let now = SystemTime::now()
@@ -161,6 +165,7 @@ impl Broadcaster {
                     })
                     .await?;
 
+                // then send to kinesis, and save the point/seq number back to the destination
                 let result = self
                     .kinesis
                     .put_record()
@@ -169,13 +174,25 @@ impl Broadcaster {
                     .stream_arn(&destination.stream_arn)
                     .send()
                     .await?;
-
                 destination
                     .commit(
                         &self.dynamo,
                         &self.table,
-                        message.point(),
-                        result.sequence_number,
+                        point,
+                        Some(result.sequence_number),
+                    )
+                    .await?;
+            } else {
+                // If the block doesn't apply, we still advance the point
+                // with the same sequence number
+                // so that we don't replay excessively if a filter makes
+                // hits rare
+                destination
+                    .commit(
+                        &self.dynamo,
+                        &self.table,
+                        point,
+                        destination.sequence_number.clone(),
                     )
                     .await?;
             }
