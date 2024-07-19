@@ -6,7 +6,7 @@ use aws_sdk_dynamodb::{error::SdkError, types::AttributeValue, Client as DynamoC
 use serde::{Deserialize, Serialize};
 use serde_dynamo::aws_sdk_dynamodb_1::to_item;
 use std::fmt::Debug;
-use tracing::info;
+use tracing::{info, trace};
 use uuid::Uuid;
 
 /// A dynamodb record for holding the lock
@@ -37,7 +37,7 @@ impl Debug for Lock {
 impl Lock {
     /// Acquire a new lock from scratch
     pub async fn acquire(dynamo: DynamoClient, duration: Duration) -> Result<Option<Lock>> {
-        info!("Acquiring lock");
+        trace!("Acquiring lock");
         // We do this by constructing the lock, and then trying to renew it
         let instance_id = Uuid::new_v4().to_string();
         let lock_record = LockRecord {
@@ -56,11 +56,10 @@ impl Lock {
 
     /// Renew an existing lock, setting the expiration to now + duration
     pub async fn renew(mut self, duration: Duration) -> Result<Option<Lock>> {
-        info!("Renewing lock");
+        trace!("Renewing lock");
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time went backwards");
-        info!("Time");
 
         self.record.expiration = (now + duration).as_millis() as u64;
         // Insert the item into dynamo, with a condition so it succeeds
@@ -84,10 +83,8 @@ impl Lock {
             .send()
             .await;
 
-        info!("Finished Dynamo");
         match result {
             Ok(_) => {
-                info!("Locked");
                 // If we succeeded in acquiring the lock, record it and return self
                 self.locked = true;
                 Ok(Some(self))

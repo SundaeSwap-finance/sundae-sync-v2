@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod args;
 pub mod broadcast;
 pub mod filter;
@@ -6,35 +7,44 @@ pub mod logic;
 pub mod node;
 pub mod u5c;
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use archive::Archive;
 use aws_config::{meta::region::RegionProviderChain, BehaviorVersion};
 use aws_sdk_dynamodb::Client as DynamoClient;
 use aws_sdk_kinesis::Client as KinesisClient;
-use aws_sdk_s3::{primitives::Blob, Client as S3Client};
+use aws_sdk_s3::{
+    config::IntoShared,
+    primitives::{Blob, ByteStream},
+    Client as S3Client,
+};
 use broadcast::{load_destinations, Destination};
 use clap::Parser;
+use hex::ToHex;
 use lock::LockThread;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use args::Args;
 use pallas::{
     interop::utxorpc::{LedgerContext, Mapper, TxoRef, UtxoMap},
-    network::{facades::NodeClient, miniprotocols::Point},
+    network::{
+        facades::NodeClient,
+        miniprotocols::{chainsync::NextResponse, Point},
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_dynamo::aws_sdk_dynamodb_1::to_item;
-use tokio::{signal, task::JoinSet};
+use tokio::{select, signal, sync::watch::Receiver, task::JoinSet, time::sleep};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
-use utxorpc::spec::sync::BlockRef;
+use tracing::{info, trace, warn};
+use utxorpc::{spec::sync::BlockRef, CardanoSyncClient, ClientBuilder, TipEvent};
 
 pub struct Worker {
     pub dynamo: DynamoClient,
     pub kinesis: KinesisClient,
+    pub archive: Archive,
 
-    pub socket_path: String,
-    pub magic: u64,
+    pub uri: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -43,19 +53,8 @@ pub enum BroadcastMessage {
     Undo(BlockRef),
 }
 
-#[derive(Clone)]
-struct NoContext;
-impl LedgerContext for NoContext {
-    fn get_utxos(&self, _refs: &[TxoRef]) -> Option<UtxoMap> {
-        None
-    }
-}
 impl Worker {
-    async fn worker_thread(
-        &self,
-        lock_id: String,
-        lock_deadline: tokio::sync::watch::Receiver<u64>,
-    ) -> Result<()> {
+    async fn worker_thread(&self, lock_id: String, mut lock_deadline: Receiver<u64>) -> Result<()> {
         // Fetch destinations from the database
         let destinations = load_destinations(self.dynamo.clone()).await?;
 
@@ -71,60 +70,87 @@ impl Worker {
             .point
             .clone();
 
-        // let mut recent_blocks = VecDeque::new();
-        let mapper = Mapper::new(NoContext {});
+        let mut client = ClientBuilder::new()
+            .uri(&self.uri)?
+            .build::<CardanoSyncClient>()
+            .await;
 
-        let mut client = NodeClient::connect(&self.socket_path, self.magic).await?;
-        let (point, _) = client
-            .chainsync()
-            .find_intersect(vec![Point::Specific(
-                min_point.index,
-                min_point.hash.into(),
-            )])
-            .await?;
+        let mut tip = client.follow_tip(vec![min_point]).await?;
         loop {
-            let next = client.chainsync().request_or_await_next().await?;
-            let block = match next {
-                pallas::network::miniprotocols::chainsync::NextResponse::RollForward(block, _) => {
-                    block
-                }
-                pallas::network::miniprotocols::chainsync::NextResponse::RollBackward(_, _) => {
-                    continue
-                }
-                pallas::network::miniprotocols::chainsync::NextResponse::Await => continue,
-            };
-            let block = mapper.map_block_cbor(&block);
-            let block_header = block.header.clone().unwrap();
-            info!("Block {}", hex::encode(&block_header.hash));
-            let message = BroadcastMessage::Roll(BlockRef {
-                index: block_header.height,
-                hash: block_header.hash,
-            });
-            let message_bytes = serde_json::to_vec(&message)?;
-            for destination in &destinations {
-                let applies = destination
-                    .filter
-                    .as_ref()
-                    .map(|f| {
-                        block
-                            .body
+            select! {
+                _ = sleep(Duration::from_secs(5 * 60)) => {
+                    warn!("No block in 5 minutes, failing over to another node");
+                    bail!("No block in 5 minutes, failing over to another node");
+                },
+                result = tip.event() => {
+                    let event = result?;
+                    let (block, message) = match event {
+                        TipEvent::Apply(block) => {
+                            let bytes = block.native;
+                            let block = block.parsed.expect("must include block");
+                            let block_header = block.header.clone().expect("must have header");
+
+                            let start = SystemTime::now();
+                            info!("Roll forward block {}", block_header.hash.encode_hex::<String>());
+                            self.archive.save(&block, bytes.to_vec()).await?;
+                            trace!("Block {} saved (elapsed={:?})", block_header.hash.encode_hex::<String>(), SystemTime::now().duration_since(start)?);
+
+                            (
+                                block,
+                                BroadcastMessage::Roll(BlockRef {
+                                    index: block_header.slot,
+                                    hash: block_header.hash,
+                                }),
+                            )
+                        }
+                        TipEvent::Undo(block) => {
+                            let block = block.parsed.expect("must include block");
+                            let block_header = block.header.clone().expect("must have header");
+
+                            // Unsave the block, so the UTXOs get set correctly
+                            let start = SystemTime::now();
+                            info!("Undo block {}", block_header.hash.encode_hex::<String>());
+                            self.archive.unsave(&block).await?;
+                            trace!("Block {} unsaved (elapsed={:?})", block_header.hash.encode_hex::<String>(), SystemTime::now().duration_since(start)?);
+
+                            (
+                                block,
+                                BroadcastMessage::Undo(BlockRef {
+                                    index: block_header.slot,
+                                    hash: block_header.hash,
+                                }),
+                            )
+                        }
+                        TipEvent::Reset(_) => todo!(),
+                    };
+                    let start = SystemTime::now();
+                    let message_bytes = serde_json::to_vec(&message)?;
+                    for destination in &destinations {
+                        let applies = destination
+                            .filter
                             .as_ref()
-                            .unwrap()
-                            .tx
-                            .iter()
-                            .any(|tx| f.applies(tx))
-                    })
-                    .unwrap_or(true);
-                if applies {
-                    let resp = self
-                        .kinesis
-                        .put_record()
-                        .partition_key("partition")
-                        .data(Blob::new(message_bytes.clone()))
-                        .stream_arn(&destination.stream_arn)
-                        .send()
-                        .await?;
-                    info!("Wrote message {}", resp.sequence_number);
+                            .map_or(true, |f| f.applies_block(&block));
+                        if applies {
+                            lock_deadline
+                                .wait_for(|deadline| {
+                                    let now = SystemTime::now()
+                                        .duration_since(UNIX_EPOCH)
+                                        .expect("time went backwards")
+                                        .as_millis() as u64;
+                                    now < *deadline
+                                })
+                                .await?;
+                            let resp = self
+                                .kinesis
+                                .put_record()
+                                .partition_key("partition")
+                                .data(Blob::new(message_bytes.clone()))
+                                .stream_arn(&destination.stream_arn)
+                                .send()
+                                .await?;
+                        }
+                    }
+                    trace!("Message broadcast (elapsed={:?})", SystemTime::now().duration_since(start)?);
                 }
             }
         }
@@ -145,7 +171,7 @@ async fn main() -> Result<()> {
         .region(region_provider)
         .load()
         .await;
-    let _s3_client = S3Client::new(&config);
+    let s3_client = S3Client::new(&config);
     let dynamo_client = DynamoClient::new(&config);
     let kinesis_client = KinesisClient::new(&config);
 
@@ -189,11 +215,18 @@ async fn main() -> Result<()> {
             dynamo: dynamo_client.clone(),
         };
 
+        let archive = Archive {
+            bucket: "preview-529991308818-sundae-sync-v2-test-bucket".to_string(),
+            table: "sundae-sync-v2-test-table".to_string(),
+            s3: s3_client,
+            dynamo: dynamo_client.clone(),
+        };
+
         let worker = Worker {
             dynamo: dynamo_client.clone(),
             kinesis: kinesis_client.clone(),
-            magic: args.network_magic.unwrap(),
-            socket_path: args.socket_path.unwrap(),
+            uri: args.utxo_rpc_url.unwrap(),
+            archive,
         };
 
         let cancel = cancel.clone();

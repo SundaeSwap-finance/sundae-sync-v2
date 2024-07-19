@@ -1,6 +1,6 @@
 use pallas::ledger::addresses::Address;
 use serde::{Deserialize, Serialize};
-use utxorpc::spec::cardano::{Multiasset, Tx, TxOutput};
+use utxorpc::spec::cardano::{Block, Multiasset, Tx, TxOutput};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TokenFilter {
@@ -56,6 +56,12 @@ impl TokenFilter {
 }
 
 impl FilterConfig {
+    pub fn applies_block(&self, b: &Block) -> bool {
+        b.body
+            .as_ref()
+            .map_or(true, |body| body.tx.iter().any(|tx| self.applies(tx)))
+    }
+
     pub fn applies(&self, tx: &Tx) -> bool {
         match self {
             FilterConfig::All(criteria) => criteria.iter().all(|c| c.applies(tx)),
