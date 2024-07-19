@@ -14,6 +14,7 @@ use hex::ToHex;
 use serde::{Deserialize, Serialize};
 use serde_dynamo::aws_sdk_dynamodb_1::from_items;
 use tokio::sync::watch::Receiver;
+use tracing::info;
 use utxorpc::spec::{cardano::Block, sync::BlockRef};
 
 use crate::filter::FilterConfig;
@@ -24,6 +25,7 @@ pub struct Destination {
     pub sk: String,
     pub stream_arn: String,
     pub filter: Option<FilterConfig>,
+    pub sequence_number: Option<String>,
     pub last_seen_point: String,
     pub recovery_points: Vec<String>,
     pub enabled: bool,
@@ -102,7 +104,8 @@ impl Broadcaster {
                     })
                     .await?;
 
-                self.kinesis
+                let result = self
+                    .kinesis
                     .put_record()
                     .partition_key("partition")
                     .data(Blob::new(message_bytes.clone()))
@@ -110,7 +113,8 @@ impl Broadcaster {
                     .send()
                     .await?;
 
-                self.commit(message.point(), &destination).await?;
+                self.commit(message.point(), result.sequence_number, &destination)
+                    .await?;
             }
         }
         // TODO: move into commit?
@@ -125,7 +129,12 @@ impl Broadcaster {
         Ok(())
     }
 
-    pub async fn commit(&self, point: BlockRef, destination: &Destination) -> Result<()> {
+    pub async fn commit(
+        &self,
+        point: BlockRef,
+        seq_num: String,
+        destination: &Destination,
+    ) -> Result<()> {
         let mut new_recovery = destination.recovery_points.clone();
         let point = point_to_string(point);
         new_recovery.push(point.clone());
@@ -143,12 +152,13 @@ impl Broadcaster {
             .key("sk", AttributeValue::S(destination.sk.clone()))
             .condition_expression("last_seen_point = :last_point")
             .update_expression(
-                "SET last_seen_point = :new_point, recovery_points = :rotated_points",
+                "SET last_seen_point = :new_point, sequence_number = :seq, recovery_points = :rotated_points",
             )
             .expression_attribute_values(
                 ":last_point",
                 AttributeValue::S(destination.last_seen_point.clone()),
             )
+            .expression_attribute_values(":seq", AttributeValue::S(seq_num))
             .expression_attribute_values(":new_point", AttributeValue::S(point.clone()))
             .expression_attribute_values(":rotated_points", AttributeValue::L(new_recovery))
             .send()
