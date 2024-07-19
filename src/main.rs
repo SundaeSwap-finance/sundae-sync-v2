@@ -11,7 +11,7 @@ use aws_config::{meta::region::RegionProviderChain, BehaviorVersion};
 use aws_sdk_dynamodb::Client as DynamoClient;
 use aws_sdk_kinesis::Client as KinesisClient;
 use aws_sdk_s3::Client as S3Client;
-use broadcast::{point_to_string, string_to_point, BroadcastMessage, Broadcaster, Destination};
+use broadcast::{BroadcastMessage, Broadcaster};
 use bytes::Bytes;
 use clap::Parser;
 use hex::ToHex;
@@ -19,7 +19,6 @@ use lock::LockThread;
 
 use anyhow::{bail, Context, Result};
 use args::Args;
-use serde_dynamo::aws_sdk_dynamodb_1::to_item;
 use tokio::{select, signal, sync::watch::Receiver, task::JoinSet, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, trace, warn};
@@ -96,7 +95,7 @@ fn elapsed(start: SystemTime) -> Duration {
 }
 
 impl Worker {
-    async fn worker_thread(&self, lock_id: String, lock_deadline: Receiver<u64>) -> Result<()> {
+    async fn worker_thread(&self, _lock_id: String, lock_deadline: Receiver<u64>) -> Result<()> {
         // Fetch destinations from the database
         let mut broadcaster = Broadcaster::new(
             self.dynamo.clone(),
@@ -109,16 +108,15 @@ impl Worker {
         if broadcaster.destinations.len() == 0 {
             return Ok(());
         }
-        // TODO: repair
 
         let earliest_point = broadcaster
             .destinations
             .iter()
-            .min_by_key(|d| string_to_point(d.last_seen_point.clone()).unwrap().index)
+            .min_by_key(|d| d.last_seen_point.index)
             .unwrap()
             .recovery_points
             .iter()
-            .map(|p| string_to_point(p.clone()).unwrap())
+            .cloned()
             .rev()
             .collect();
 
