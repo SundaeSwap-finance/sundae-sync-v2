@@ -159,7 +159,7 @@ impl Worker {
 async fn main() -> Result<()> {
     let cancel = CancellationToken::new();
     tracing_subscriber::fmt::init();
-    info!("Starting");
+    info!("Starting sundae-sync-v2");
 
     let args = Args::parse();
     let mut tasks: JoinSet<Result<()>> = JoinSet::new();
@@ -173,31 +173,11 @@ async fn main() -> Result<()> {
     let dynamo_client = DynamoClient::new(&config);
     let kinesis_client = KinesisClient::new(&config);
 
-    // let dest = Destination {
-    //     pk: "sundae-sync-v2-destination".into(),
-    //     sk: "all".into(),
-    //     filter: None,
-    //     stream_arn:
-    //         "arn:aws:kinesis:us-east-2:529991308818:stream/preview-sundae-sync-v2--test-stream"
-    //             .into(),
-    //     last_seen_point: point_to_string(BlockRef {
-    //         index: 54260713,
-    //         hash: hex::decode("e13ccc8cec1d4dffa5127bf6947485045b6c58cb61495f99df36b1e9151d4d56")?
-    //             .into(),
-    //     }),
-    //     recovery_points: vec![],
-    //     enabled: true,
-    // };
-    // dynamo_client
-    //     .put_item()
-    //     .set_item(Some(to_item(dest)?))
-    //     .table_name("sundae-sync-v2-test-table")
-    //     .send()
-    //     .await?;
     {
         // Cancel our worker thread once we receive a Ctrl+C
         let cancel = cancel.clone();
         tasks.spawn(async move {
+            info!("Press Ctrl+C or send SIGINT to gracefully shut down...");
             signal::ctrl_c().await?;
             cancel.cancel();
             Ok(())
@@ -205,7 +185,7 @@ async fn main() -> Result<()> {
     }
 
     {
-        // Spawn a thread that runs our worker thread
+        // Spawn a thread that runs our worker thread *only* when we have a lock thread
         let lock_thread = LockThread {
             lock_duration: Duration::from_secs(20),
             lock_acquire_freq: Duration::from_secs(5),
@@ -233,6 +213,7 @@ async fn main() -> Result<()> {
         tasks.spawn(async move { lock_thread.maintain_lock(cancel, worker).await });
     }
 
+    // Wait for all our tasks to finish
     while let Some(result) = tasks.join_next().await {
         match result? {
             Ok(_) => info!("Task finished succesfully"),
