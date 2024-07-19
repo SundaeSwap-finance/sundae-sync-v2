@@ -17,16 +17,7 @@ pub struct Args {
     #[arg(short, long, env("CARDANO_NETWORK_MAGIC"))]
     pub network_magic: Option<u64>,
 
+    /// The URL of the utxorpc server to connect to
     #[arg(short, long, env("UTXO_RPC_URL"), conflicts_with = "socket_path")]
     pub utxo_rpc_url: Option<String>,
 }
-
-// pub fn parse_point(s: &str) -> Result<Point, Box<dyn std::error::Error + Send + Sync + 'static>> {
-//     if s == "origin" {
-//         return std::result::Result::Ok(Point::Origin);
-//     }
-//     let parts: Vec<_> = s.split('/').collect();
-//     let slot = parts[0].parse()?;
-//     let hash = hex::decode(parts[1])?;
-//     std::result::Result::Ok(Point::Specific(slot, hash))
-// }
