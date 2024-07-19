@@ -1,7 +1,6 @@
 pub mod archive;
 pub mod args;
 pub mod broadcast;
-pub mod filter;
 pub mod lock;
 
 use std::time::{Duration, SystemTime};
