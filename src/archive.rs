@@ -8,6 +8,7 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 use utxorpc::spec::cardano::{Block, TxInput, TxOutput};
 
+#[derive(Clone)]
 pub struct Archive {
     pub s3: S3Client,
     pub dynamo: DynamoClient,

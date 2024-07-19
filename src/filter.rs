@@ -25,23 +25,9 @@ fn any_inputs_and_outputs<F>(tx: &Tx, f: F) -> bool
 where
     F: Fn(&TxOutput) -> bool,
 {
-    for input in &tx.inputs {
-        if let Some(output) = &input.as_output {
-            if f(&output) {
-                return true;
-            }
-        } else {
-            // We don't know whether this input applied, so we default to true
-            // because it's safer to announce extra transacitons than to miss one
-            return true;
-        }
-    }
-    for output in &tx.outputs {
-        if f(output) {
-            return true;
-        }
-    }
-    return false;
+    let (mut inputs, mut outputs) = (tx.inputs.iter(), tx.outputs.iter());
+    outputs.any(|output| f(output))
+        || inputs.any(|input| input.as_output.as_ref().map_or(true, |output| f(output)))
 }
 
 impl TokenFilter {
