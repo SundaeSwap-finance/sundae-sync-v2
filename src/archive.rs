@@ -4,6 +4,7 @@ use aws_sdk_s3::{primitives::Blob, Client as S3Client};
 use bytes::Bytes;
 use futures::{join, stream::FuturesUnordered, StreamExt};
 use hex::ToHex;
+use pallas::interop::utxorpc::{LedgerContext, Mapper};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use utxorpc::spec::cardano::{Block, TxInput, TxOutput};
@@ -66,6 +67,17 @@ pub struct DynamoUTXO {
     // spent_tx_hash: Option<Vec<u8>>,
 }
 
+#[derive(Clone)]
+struct NoContext;
+impl LedgerContext for NoContext {
+    fn get_utxos(
+        &self,
+        _refs: &[pallas::interop::utxorpc::TxoRef],
+    ) -> Option<pallas::interop::utxorpc::UtxoMap> {
+        None
+    }
+}
+
 impl Archive {
     pub async fn save(&self, block: &Block, bytes: Vec<u8>) -> Result<()> {
         let header = block.header.as_ref().expect("must have header");
@@ -108,6 +120,21 @@ impl Archive {
         self.save_block_ptr(header.height, &header.hash).await?;
 
         Ok(())
+    }
+
+    pub async fn read_by_hash(&self, hash: impl ToHex) -> Result<Block> {
+        let response = self
+            .s3
+            .get_object()
+            .bucket(&self.bucket)
+            .key(block_hash_key(hash))
+            .send()
+            .await?;
+        let bytes = response.body.collect().await?;
+
+        let mapper = Mapper::new(NoContext);
+        let block = mapper.map_block_cbor(bytes.to_vec().as_slice());
+        Ok(block)
     }
 
     pub async fn unsave(&self, block: &Block) -> Result<()> {
