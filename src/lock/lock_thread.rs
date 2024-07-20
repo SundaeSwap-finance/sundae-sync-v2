@@ -87,7 +87,6 @@ impl LockThread {
                             }
                             // it's time to renew the lock
                             _ = sleep(self.lock_renew_freq) => {
-                                info!("Renewing Lock {}", lock_id);
                                 lock = lock.expect("not holding lock??").renew(self.lock_duration).await?;
                                 // we may fail to renew the lock!
                                 match &lock {

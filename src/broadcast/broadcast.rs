@@ -2,12 +2,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoClient};
-use aws_sdk_kinesis::{types::ShardIteratorType, Client as KinesisClient};
+use aws_sdk_kinesis::Client as KinesisClient;
 use aws_sdk_s3::primitives::Blob;
 use serde::{Deserialize, Serialize};
 use serde_dynamo::aws_sdk_dynamodb_1::from_items;
 use tokio::sync::watch::Receiver;
-use tracing::info;
 use utxorpc::spec::{cardano::Block, sync::BlockRef};
 
 use super::Destination;
@@ -20,20 +19,13 @@ pub struct Broadcaster {
     pub deadline: Receiver<u64>,
 }
 
-#[derive(Serialize, Deserialize)]
-pub enum BroadcastMessage {
-    Roll(BlockRef),
-    Undo(BlockRef),
-}
-
-impl BroadcastMessage {
-    pub fn point(&self) -> BlockRef {
-        match self {
-            BroadcastMessage::Roll(point) => point,
-            BroadcastMessage::Undo(point) => point,
-        }
-        .clone()
-    }
+/// A sequence of blocks to undo, followed by one block to advance
+/// Messages are structured this way to make sequences of undo's atomic
+/// so that we can repair after a crash much easier
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BroadcastMessage {
+    pub undo: Vec<BlockRef>,
+    pub advance: BlockRef,
 }
 
 impl Broadcaster {
@@ -45,9 +37,10 @@ impl Broadcaster {
     ) -> Result<Self> {
         // Load destinations from dynamo
         let resp = dynamo
-            .scan()
+            .query()
             .consistent_read(true)
-            .filter_expression("pk = :key and enabled = :enabled")
+            .key_condition_expression("pk = :key")
+            .filter_expression("enabled = :enabled")
             .expression_attribute_values(
                 ":key",
                 AttributeValue::S("sundae-sync-v2-destination".into()),
@@ -71,13 +64,13 @@ impl Broadcaster {
         let message_bytes = serde_json::to_vec(&message)?;
         // For each destination
         for destination in &mut self.destinations {
-            let point = message.point();
             // Ignore this destination if we're further back in the chain
-            if destination.last_seen_point.index > point.index {
+            if destination.last_seen_point.index > message.advance.index {
                 continue;
             }
             // Check if we *should* send to this destination,
             // based on whether any of the transactions match the criteria
+            println!("{}: {:?}", destination.sk, destination.filter);
             let applies = destination
                 .filter
                 .as_ref()
@@ -104,12 +97,11 @@ impl Broadcaster {
                     .stream_arn(&destination.stream_arn)
                     .send()
                     .await?;
-                println!("Seq: {}", result.sequence_number);
                 destination
                     .commit(
                         &self.dynamo,
                         &self.table,
-                        point,
+                        message.advance.clone(),
                         Some(result.sequence_number),
                     )
                     .await?;
@@ -122,7 +114,7 @@ impl Broadcaster {
                     .commit(
                         &self.dynamo,
                         &self.table,
-                        point,
+                        message.advance.clone(),
                         destination.sequence_number.clone(),
                     )
                     .await?;
@@ -132,9 +124,14 @@ impl Broadcaster {
     }
 
     pub async fn repair(&mut self) -> Result<()> {
-        let kinesis = self.kinesis.clone();
         for destination in &mut self.destinations {
-            destination.repair(kinesis.clone()).await?;
+            destination
+                .repair(
+                    self.kinesis.clone(),
+                    self.dynamo.clone(),
+                    self.table.clone(),
+                )
+                .await?;
         }
         Ok(())
     }

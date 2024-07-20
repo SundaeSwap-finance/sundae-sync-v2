@@ -1,3 +1,5 @@
+use std::time::{Duration, SystemTime};
+
 use anyhow::Result;
 use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoClient};
 use aws_sdk_s3::{primitives::Blob, Client as S3Client};
@@ -7,7 +9,11 @@ use hex::ToHex;
 use pallas::interop::utxorpc::{LedgerContext, Mapper};
 use prost::Message;
 use serde::{Deserialize, Serialize};
+use tokio::time::sleep;
+use tracing::{info, trace, warn};
 use utxorpc::spec::cardano::{Block, TxInput, TxOutput};
+
+use crate::elapsed;
 
 #[derive(Clone)]
 pub struct Archive {
@@ -80,45 +86,31 @@ impl LedgerContext for NoContext {
 
 impl Archive {
     pub async fn save(&self, block: &Block, bytes: Vec<u8>) -> Result<()> {
+        let start = SystemTime::now();
         let header = block.header.as_ref().expect("must have header");
 
         // We'll build up a list of different futures, and wait on
         // them all in parallel
         let save_utxos = FuturesUnordered::new();
-        let spend_utxos = FuturesUnordered::new();
 
         // Save the raw bytes of the block, indexed by its hash
         let save_block = self.save_raw_block(&header.hash, bytes);
         // For each transaction, spend the inputs and save the outputs
         for tx in &block.body.as_ref().expect("must have body").tx {
-            for input in &tx.inputs {
-                spend_utxos.push(self.spend_utxo(&tx.hash, input));
-            }
             for (idx, output) in tx.outputs.iter().enumerate() {
                 save_utxos.push(self.save_raw_utxo(header.slot, &tx.hash, idx, output));
             }
         }
 
         // Wait for all the futures to finish, in any order
-        let (save_block, save_utxos, spend_utxos) = join![
-            save_block,
-            save_utxos.collect::<Vec<_>>(),
-            spend_utxos.collect::<Vec<_>>(),
-        ];
+        let (save_block, save_utxos) = join![save_block, save_utxos.collect::<Vec<_>>(),];
         // Then ? all the results
         save_block?;
         for result in save_utxos {
             result?;
         }
-        for result in spend_utxos {
-            result?;
-        }
 
-        // Save the pointer only after the above futures have finished,
-        // to avoid something trying to fetch by header height, and
-        // finding a block that hasn't saved yet
-        self.save_block_ptr(header.height, &header.hash).await?;
-
+        trace!("Finished saving block (elapsed={:?})", elapsed(start));
         Ok(())
     }
 
@@ -167,6 +159,7 @@ impl Archive {
     }
 
     async fn save_raw_block(&self, hash: impl ToHex, bytes: Vec<u8>) -> Result<()> {
+        let start = SystemTime::now();
         self.s3
             .put_object()
             .bucket(&self.bucket)
@@ -174,17 +167,7 @@ impl Archive {
             .body(bytes.into())
             .send()
             .await?;
-        Ok(())
-    }
-
-    async fn save_block_ptr(&self, height: u64, hash: &Bytes) -> Result<()> {
-        self.s3
-            .put_object()
-            .bucket(&self.bucket)
-            .key(block_height_key(height))
-            .body(hash.to_vec().into())
-            .send()
-            .await?;
+        trace!("Finished uploading block (elapsed={:?})", elapsed(start));
         Ok(())
     }
 
@@ -244,7 +227,7 @@ impl Archive {
         Ok(())
     }
 
-    async fn spend_utxo(&self, _tx_hash: &Bytes, _input: &TxInput) -> Result<()> {
+    async fn _spend_utxo(&self, _tx_hash: &Bytes, _input: &TxInput) -> Result<()> {
         // TODO
         // let key = utxo_key(&input.tx_hash, input.output_index as usize);
         // self.dynamo

@@ -45,37 +45,20 @@ impl Follower {
         Ok(Self { tip })
     }
 
-    async fn next_event(&mut self) -> Result<(Bytes, Block, BlockHeader, BroadcastMessage)> {
+    async fn next_event(&mut self) -> Result<(bool, Bytes, Block, BlockHeader)> {
         let event = self.tip.event().await.context("failed to grab tip")?;
-        Ok(match event {
-            TipEvent::Apply(block) => {
-                let bytes = block.native;
-                let block = block.parsed.expect("must include block");
-                let block_header = block.header.clone().expect("must have header");
-                let (index, hash) = (block_header.slot, block_header.hash.clone());
+        let (bytes, block) = match &event {
+            TipEvent::Apply(block) | TipEvent::Undo(block) => {
+                let bytes = block.native.clone();
+                let block = block.parsed.clone().expect("must include block");
 
-                (
-                    bytes,
-                    block,
-                    block_header,
-                    BroadcastMessage::Roll(BlockRef { index, hash }),
-                )
-            }
-            TipEvent::Undo(block) => {
-                let bytes = block.native;
-                let block = block.parsed.expect("must include block");
-                let block_header = block.header.clone().expect("must have header");
-                let (index, hash) = (block_header.slot, block_header.hash.clone());
-
-                (
-                    bytes,
-                    block,
-                    block_header,
-                    BroadcastMessage::Undo(BlockRef { index, hash }),
-                )
+                (bytes, block)
             }
             TipEvent::Reset(_) => todo!(),
-        })
+        };
+        let header = block.header.as_ref().expect("must include header").clone();
+
+        Ok((matches!(event, TipEvent::Apply(_)), bytes, block, header))
     }
 }
 
@@ -105,6 +88,7 @@ impl Worker {
         .await?;
 
         if broadcaster.destinations.len() == 0 {
+            warn!("No enabled destinations, nothing to do");
             return Ok(());
         }
 
@@ -114,14 +98,26 @@ impl Worker {
             .destinations
             .iter()
             .min_by_key(|d| d.last_seen_point.index)
-            .unwrap()
+            .unwrap();
+        let intersect = earliest_point
             .recovery_points
             .iter()
             .cloned()
             .rev()
             .collect();
 
-        let mut follower = Follower::new(&self.uri, earliest_point).await?;
+        info!(
+            "Starting from {}/{}",
+            earliest_point.last_seen_point.index,
+            earliest_point
+                .last_seen_point
+                .hash
+                .to_vec()
+                .encode_hex::<String>()
+        );
+        let mut follower = Follower::new(&self.uri, intersect).await?;
+
+        let mut undo_stack = vec![];
 
         loop {
             select! {
@@ -130,26 +126,34 @@ impl Worker {
                     bail!("No block in 5 minutes, failing over to another node");
                 },
                 result = follower.next_event() => {
-                    let (bytes, block, block_header, message) = result?;
-                    let block_hash: String = block_header.hash.encode_hex();
+                    let (is_roll_forward, bytes, block, header) = result?;
+                    let block_hash: String = header.hash.encode_hex();
 
                     let start = SystemTime::now();
-                    match &message {
-                        BroadcastMessage::Roll(_) => {
-                            info!("Roll forward block {}", block_hash);
-                            self.archive.save(&block, bytes.to_vec()).await?;
-                            trace!("Block {} saved (elapsed={:?})", block_hash, elapsed(start));
-                        },
-                        BroadcastMessage::Undo(_) => {
-                            info!("Undo block {}", block_hash);
-                            self.archive.unsave(&block).await?;
-                            trace!("Block {} unsaved (elapsed={:?})", block_hash, elapsed(start));
-                        },
+                    let point = BlockRef {
+                        index: header.slot,
+                        hash: header.hash,
+                    };
+                    if is_roll_forward {
+                        trace!("Saving {}/{}", point.index, block_hash);
+                        self.archive.save(&block, bytes.to_vec()).await?;
+                        trace!("Block {}/{} saved (elapsed={:?})", point.index, block_hash, elapsed(start));
+
+                        let start = SystemTime::now();
+                        broadcaster.broadcast(block, BroadcastMessage {
+                            undo: undo_stack.clone(),
+                            advance: point.clone(),
+                        }).await?;
+                        trace!("Message broadcast (elapsed={:?})", SystemTime::now().duration_since(start)?);
+                        undo_stack.clear();
+                        info!("Roll forward block {}/{}", point.index, block_hash);
+                    } else {
+                        trace!("Unsaving {}/{}", point.index, block_hash);
+                        self.archive.unsave(&block).await?;
+                        trace!("Block {}/{} unsaved (elapsed={:?})", point.index, block_hash, elapsed(start));
+                        undo_stack.push(point.clone());
+                        info!("Undo block {}/{}", point.index, block_hash);
                     }
-
-                    let start = SystemTime::now();
-                    broadcaster.broadcast(block, message).await?;
-                    trace!("Message broadcast (elapsed={:?})", SystemTime::now().duration_since(start)?);
                 }
             }
         }

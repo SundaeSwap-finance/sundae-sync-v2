@@ -7,7 +7,7 @@ use aws_sdk_kinesis::{types::ShardIteratorType, Client as KinesisClient};
 use bytes::Bytes;
 use hex::ToHex;
 use serde::{ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer};
-use tracing::info;
+use tracing::{info, trace, warn};
 use utxorpc::spec::sync::BlockRef;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -84,7 +84,7 @@ impl Destination {
         kinesis: KinesisClient,
         dynamo: DynamoClient,
         table: String,
-    ) -> Result<()> {
+    ) -> Result<BlockRef> {
         // read from kinesis
         let mut shard_request = kinesis
             .get_shard_iterator()
@@ -95,6 +95,10 @@ impl Destination {
                 .shard_iterator_type(ShardIteratorType::AfterSequenceNumber)
                 .starting_sequence_number(seq_no);
         } else {
+            warn!(
+                "No sequence number for destination {}, starting from trim horizon",
+                self.sk
+            );
             shard_request = shard_request.shard_iterator_type(ShardIteratorType::TrimHorizon)
         }
         let mut iterator = shard_request
@@ -102,6 +106,7 @@ impl Destination {
             .await?
             .shard_iterator
             .expect("failed to get shard iterator");
+        info!("Repairing destination {}", self.sk);
         loop {
             let records = kinesis
                 .get_records()
@@ -114,21 +119,31 @@ impl Destination {
                 .next_shard_iterator
                 .expect("stream should be provisioned");
 
+            info!(
+                "Received {} records, {:?}ms behind tip",
+                records.records.len(),
+                records.millis_behind_latest
+            );
             for record in records.records {
                 let message = serde_json::from_slice::<BroadcastMessage>(
                     record.data.into_inner().as_slice(),
                 )?;
-                let point = message.point();
-                self.commit(&dynamo, &table, point, Some(record.sequence_number))
-                    .await?;
+                self.commit(
+                    &dynamo,
+                    &table,
+                    message.advance,
+                    Some(record.sequence_number),
+                )
+                .await?;
             }
 
             if records.millis_behind_latest.unwrap_or(0) == 0 {
                 break;
             }
         }
-        info!("Done");
-        Ok(())
+        trace!("Repaired destination {} sequence number", self.sk);
+
+        Ok(self.last_seen_point.clone())
     }
 }
 
