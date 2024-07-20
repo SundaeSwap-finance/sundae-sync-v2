@@ -1,9 +1,13 @@
+use crate::broadcast::BroadcastMessage;
+
 use super::filter::FilterConfig;
 use anyhow::Result;
 use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoClient};
+use aws_sdk_kinesis::{types::ShardIteratorType, Client as KinesisClient};
 use bytes::Bytes;
 use hex::ToHex;
 use serde::{ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer};
+use tracing::info;
 use utxorpc::spec::sync::BlockRef;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -11,6 +15,7 @@ pub struct Destination {
     pub pk: String,
     pub sk: String,
     pub stream_arn: String,
+    pub shard_id: String,
     pub filter: Option<FilterConfig>,
     pub sequence_number: Option<String>,
     #[serde(
@@ -71,6 +76,58 @@ impl Destination {
             .expression_attribute_values(":rotated_points", AttributeValue::L(recovery_points))
             .send()
             .await?;
+        Ok(())
+    }
+
+    pub async fn repair(
+        &mut self,
+        kinesis: KinesisClient,
+        dynamo: DynamoClient,
+        table: String,
+    ) -> Result<()> {
+        // read from kinesis
+        let mut shard_request = kinesis
+            .get_shard_iterator()
+            .stream_arn(&self.stream_arn)
+            .shard_id(&self.shard_id);
+        if let Some(seq_no) = &self.sequence_number {
+            shard_request = shard_request
+                .shard_iterator_type(ShardIteratorType::AfterSequenceNumber)
+                .starting_sequence_number(seq_no);
+        } else {
+            shard_request = shard_request.shard_iterator_type(ShardIteratorType::TrimHorizon)
+        }
+        let mut iterator = shard_request
+            .send()
+            .await?
+            .shard_iterator
+            .expect("failed to get shard iterator");
+        loop {
+            let records = kinesis
+                .get_records()
+                .stream_arn(&self.stream_arn)
+                .shard_iterator(&iterator)
+                .send()
+                .await?;
+
+            iterator = records
+                .next_shard_iterator
+                .expect("stream should be provisioned");
+
+            for record in records.records {
+                let message = serde_json::from_slice::<BroadcastMessage>(
+                    record.data.into_inner().as_slice(),
+                )?;
+                let point = message.point();
+                self.commit(&dynamo, &table, point, Some(record.sequence_number))
+                    .await?;
+            }
+
+            if records.millis_behind_latest.unwrap_or(0) == 0 {
+                break;
+            }
+        }
+        info!("Done");
         Ok(())
     }
 }

@@ -2,11 +2,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoClient};
-use aws_sdk_kinesis::Client as KinesisClient;
+use aws_sdk_kinesis::{types::ShardIteratorType, Client as KinesisClient};
 use aws_sdk_s3::primitives::Blob;
 use serde::{Deserialize, Serialize};
 use serde_dynamo::aws_sdk_dynamodb_1::from_items;
 use tokio::sync::watch::Receiver;
+use tracing::info;
 use utxorpc::spec::{cardano::Block, sync::BlockRef};
 
 use super::Destination;
@@ -26,7 +27,7 @@ pub enum BroadcastMessage {
 }
 
 impl BroadcastMessage {
-    fn point(&self) -> BlockRef {
+    pub fn point(&self) -> BlockRef {
         match self {
             BroadcastMessage::Roll(point) => point,
             BroadcastMessage::Undo(point) => point,
@@ -103,6 +104,7 @@ impl Broadcaster {
                     .stream_arn(&destination.stream_arn)
                     .send()
                     .await?;
+                println!("Seq: {}", result.sequence_number);
                 destination
                     .commit(
                         &self.dynamo,
@@ -125,6 +127,14 @@ impl Broadcaster {
                     )
                     .await?;
             }
+        }
+        Ok(())
+    }
+
+    pub async fn repair(&mut self) -> Result<()> {
+        let kinesis = self.kinesis.clone();
+        for destination in &mut self.destinations {
+            destination.repair(kinesis.clone()).await?;
         }
         Ok(())
     }

@@ -108,6 +108,8 @@ impl Worker {
             return Ok(());
         }
 
+        broadcaster.repair().await?;
+
         let earliest_point = broadcaster
             .destinations
             .iter()
