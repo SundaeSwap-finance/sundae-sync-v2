@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tracing::trace;
 use utxorpc::spec::cardano::{Block, TxInput, TxOutput};
 
-use crate::elapsed;
+use crate::utils::elapsed;
 
 #[derive(Clone)]
 pub struct Archive {
