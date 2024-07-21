@@ -124,20 +124,17 @@ impl Destination {
                 records.records.len(),
                 records.millis_behind_latest
             );
-            for record in records.records {
-                let message = serde_json::from_slice::<BroadcastMessage>(
-                    record.data.into_inner().as_slice(),
-                )?;
-                self.commit(
-                    &dynamo,
-                    &table,
-                    message.advance,
-                    Some(record.sequence_number),
-                )
-                .await?;
+            let millis_behind_latest = records.millis_behind_latest.unwrap_or(0);
+            if records.records.len() > 0 {
+                let last_record = records.records.into_iter().last().unwrap();
+                let seq_no = last_record.sequence_number;
+                let data = last_record.data.into_inner();
+                let message: BroadcastMessage = serde_json::from_slice(data.as_slice())?;
+                let advance = message.advance;
+                self.commit(&dynamo, &table, advance, Some(seq_no)).await?;
             }
 
-            if records.millis_behind_latest.unwrap_or(0) == 0 {
+            if millis_behind_latest == 0 {
                 break;
             }
         }

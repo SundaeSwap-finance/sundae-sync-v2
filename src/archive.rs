@@ -1,4 +1,4 @@
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use anyhow::Result;
 use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoClient};
@@ -9,8 +9,7 @@ use hex::ToHex;
 use pallas::interop::utxorpc::{LedgerContext, Mapper};
 use prost::Message;
 use serde::{Deserialize, Serialize};
-use tokio::time::sleep;
-use tracing::{info, trace, warn};
+use tracing::trace;
 use utxorpc::spec::cardano::{Block, TxInput, TxOutput};
 
 use crate::elapsed;
@@ -27,11 +26,6 @@ fn block_hash_key(hash: impl ToHex) -> String {
     let hash: String = hash.encode_hex();
     let (prefix, rest) = hash.split_at(2);
     format!("blocks/by-hash/{}/{}{}.cbor", prefix, prefix, rest)
-}
-
-fn block_height_key(height: u64) -> String {
-    let prefix = height / 100_000;
-    format!("blocks/by-height/{}/{}.ptr", prefix, height)
 }
 
 fn utxo_key(hash: impl ToHex, idx: usize) -> String {

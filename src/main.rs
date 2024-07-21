@@ -135,18 +135,16 @@ impl Worker {
                         hash: header.hash,
                     };
                     if is_roll_forward {
-                        trace!("Saving {}/{}", point.index, block_hash);
                         self.archive.save(&block, bytes.to_vec()).await?;
-                        trace!("Block {}/{} saved (elapsed={:?})", point.index, block_hash, elapsed(start));
 
                         let start = SystemTime::now();
-                        broadcaster.broadcast(block, BroadcastMessage {
+                        let destinations = broadcaster.broadcast(block, BroadcastMessage {
                             undo: undo_stack.clone(),
                             advance: point.clone(),
                         }).await?;
                         trace!("Message broadcast (elapsed={:?})", SystemTime::now().duration_since(start)?);
                         undo_stack.clear();
-                        info!("Roll forward block {}/{}", point.index, block_hash);
+                        info!("Roll forward {}/{} ({})", point.index, block_hash, destinations.join(", "));
                     } else {
                         trace!("Unsaving {}/{}", point.index, block_hash);
                         self.archive.unsave(&block).await?;
@@ -188,7 +186,38 @@ async fn main() -> Result<()> {
             Ok(())
         });
     }
-
+    // let dest = Destination {
+    //     pk: "sundae-sync-v2-destination".into(),
+    //     sk: "v3-pool".into(),
+    //     filter: Some(FilterConfig::Spent(TokenFilter::Policy {
+    //         policy: hex::decode("44a1eb2d9f58add4eb1932bd0048e6a1947e85e3fe4f32956a110414")?,
+    //     })),
+    //     stream_arn:
+    //         "arn:aws:kinesis:us-east-2:529991308818:stream/preview-sundae-sync-v2--test-stream"
+    //             .into(),
+    //     shard_id: "shardId-000000000000".to_string(),
+    //     sequence_number: Some(
+    //         "49654114283944220493327477137609312811745344303713484802".to_string(),
+    //     ),
+    //     last_seen_point: BlockRef {
+    //         index: 50396142,
+    //         hash: hex::decode("da368bb475cfb3d086773627fe10ceaf7f7b3f38ba9e5d2537ce3c92738a289a")?
+    //             .into(),
+    //     },
+    //     recovery_points: vec![BlockRef {
+    //         index: 50396142,
+    //         hash: hex::decode("da368bb475cfb3d086773627fe10ceaf7f7b3f38ba9e5d2537ce3c92738a289a")?
+    //             .into(),
+    //     }],
+    //     enabled: true,
+    // };
+    // dynamo_client
+    //     .put_item()
+    //     .set_item(Some(to_item(dest)?))
+    //     .table_name("sundae-sync-v2-test-table")
+    //     .send()
+    //     .await?;
+    // return Ok(());
     {
         // Spawn a thread that runs our worker thread *only* when we have a lock thread
         let lock_thread = LockThread {

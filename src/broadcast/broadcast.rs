@@ -22,7 +22,7 @@ pub struct Broadcaster {
 /// A sequence of blocks to undo, followed by one block to advance
 /// Messages are structured this way to make sequences of undo's atomic
 /// so that we can repair after a crash much easier
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BroadcastMessage {
     pub undo: Vec<BlockRef>,
     pub advance: BlockRef,
@@ -60,8 +60,13 @@ impl Broadcaster {
         })
     }
 
-    pub async fn broadcast(&mut self, block: Block, message: BroadcastMessage) -> Result<()> {
+    pub async fn broadcast(
+        &mut self,
+        block: Block,
+        message: BroadcastMessage,
+    ) -> Result<Vec<String>> {
         let message_bytes = serde_json::to_vec(&message)?;
+        let mut destinations = vec![];
         // For each destination
         for destination in &mut self.destinations {
             // Ignore this destination if we're further back in the chain
@@ -70,7 +75,6 @@ impl Broadcaster {
             }
             // Check if we *should* send to this destination,
             // based on whether any of the transactions match the criteria
-            println!("{}: {:?}", destination.sk, destination.filter);
             let applies = destination
                 .filter
                 .as_ref()
@@ -105,6 +109,7 @@ impl Broadcaster {
                         Some(result.sequence_number),
                     )
                     .await?;
+                destinations.push(destination.sk.clone());
             } else {
                 // If the block doesn't apply, we still advance the point
                 // with the same sequence number
@@ -120,7 +125,7 @@ impl Broadcaster {
                     .await?;
             }
         }
-        Ok(())
+        Ok(destinations)
     }
 
     pub async fn repair(&mut self) -> Result<()> {
