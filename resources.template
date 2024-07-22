@@ -107,7 +107,8 @@ Resources:
                           - 's3:Get*'
                           - 's3:PutObject'
                         Resource:
-                          - !GetAtt ArchiveBucket.Arn
+                          - !Sub "arn:aws:s3:::${ArchiveBucket}/*"
+                          - !Sub "arn:aws:s3:::${ArchiveBucket}"
                       - Effect: Allow
                         Action:
                           - 'kinesis:Describe*'
