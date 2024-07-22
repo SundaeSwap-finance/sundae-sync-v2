@@ -69,3 +69,48 @@ Resources:
             Tags:
                 - Key: sundae-labs:cost-allocation:Service
                   Value: sundae-sync-v2
+
+    KinesisRole:
+        Type: AWS::IAM::Role
+        Description: "A role to allow sundae-sync-v2 to publish to the resources above"
+        Properties:
+            RoleName: !Sub "${Env}-sundae-sync-v2-role"
+            AssumeRolePolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                    - Effect: 'Allow'
+                      Principal:
+                        Service: 'ec2.amazonaws.com'
+                      Action:
+                        - 'sts:AssumeRole'
+            Policies:
+                - PolicyName: 'custom'
+                  PolicyDocument:
+                    Version: '2012-10-17'
+                  Statement:
+                    - Effect: Allow
+                      Action:
+                        - 'dynamodb:DescribeTable'
+                        - 'dynamodb:BatchGetItem'
+                        - 'dynamodb:GetItem'
+                        - 'dynamodb:Query'
+                        - 'dynamodb:Scan'
+                      Resource:
+                        - !Ref LockTable
+                        - !Ref DestinationTable
+                    - Effect: Allow
+                      Action:
+                        - 's3:List*'
+                        - 's3:Get*'
+                        - 's3:PutObject'
+                      Resource:
+                        - !Ref ArchiveBucket
+                    - Effect: Allow
+                      Action:
+                        - 'kinesis:Describe*'
+                        - 'kinesis:GetRecords'
+                        - 'kinesis:List*'
+                        - 'kinesis:PutRecord'
+                        - 'kinesis:PutRecords'
+                      Resource:
+                        - !Sub 'arn:aws:kinesis:us-east-2:${AWS::AccountId}:stream/${Env}-sundae-sync-v2--*'
