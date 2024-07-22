@@ -5,6 +5,7 @@ version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/SundaeSwap-finance/sundae-sync-v2"
 license-file = "LICENSE"
+publish = false
 
 [dependencies]
 pallas = { git = "https://github.com/txpipe/pallas.git", branch = "main" }
