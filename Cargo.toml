@@ -1,8 +1,10 @@
 [package]
 name = "sundae-sync-v2"
+description = "Sundae Labs cardano indexing backend"
 version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/SundaeSwap-finance/sundae-sync-v2"
+license-file = "LICENSE"
 
 [dependencies]
 pallas = { git = "https://github.com/txpipe/pallas.git", branch = "main" }
