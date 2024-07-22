@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  Env:
+    Type: 'String'
+    Default: 'local'
+
+Resources:
+    ArchiveBucket:
+        Type: AWS::S3::Bucket
+        Description: "A bucket holding an archive of every observed block for future reference"
+        Properties:
+            BucketName: !Sub '${Env}-sundae-sync-v2-${AWS::AccountId}-${AWS::Region}'
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: true
+                BlockPublicPolicy: true
+                IgnorePublicAcls: true
+                RestrictPublicBuckets: true
+            Tags:
+                - Key: sundae-labs:cost-allocation:Service
+                  Value: sundae-sync-v2
+
+    LockTable:
+        Type: AWS::DynamoDB::Table
+        Description: "A table for holding locks for automatic failover of nodes"
+        Properties:
+            TableName: !Sub '${Env}-sundae-sync-v2--lock'
+            AttributeDefinitions:
+                - AttributeName: 'pk'
+                  AttributeType: 'S'
+            KeySchema:
+                - AttributeName: 'pk'
+                  KeyType: HASH
+            BillingMode: PROVISIONED
+            ProvisionedThroughput:
+                ReadCapacityUnits: 10
+                WriteCapacityUnits: 10
+            Tags:
+                - Key: sundae-labs:cost-allocation:Service
+                  Value: sundae-sync-v2
+
+    DestinationTable:
+        Type: AWS::DynamoDB::Table
+        Description: "A table for holding a list of destinations to publish block notifications to"
+        Properties:
+            TableName: !Sub '${Env}-sundae-sync-v2--destination'
+            AttributeDefinitions:
+                - AttributeName: 'pk'
+                  AttributeType: 'S'
+            KeySchema:
+                - AttributeName: 'pk'
+                  KeyType: HASH
+            BillingMode: PROVISIONED
+            ProvisionedThroughput:
+                ReadCapacityUnits: 10
+                WriteCapacityUnits: 10
+            Tags:
+                - Key: sundae-labs:cost-allocation:Service
+                  Value: sundae-sync-v2
+
+    AllBlocksStream:
+        Type: AWS::Kinesis::Stream
+        Description: "A kinesis stream that receives a notification for *all* blocks"
+        Properties:
+            Name: !Sub '${Env}-sundae-sync-v2--all'
+            ShardCount: 1
+            StreamModeDetails:
+                StreamMode: 'PROVISIONED'
+            Tags:
+                - Key: sundae-labs:cost-allocation:Service
+                  Value: sundae-sync-v2
