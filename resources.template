@@ -114,3 +114,10 @@ Resources:
                           - 'kinesis:PutRecords'
                         Resource:
                           - !Sub 'arn:aws:kinesis:us-east-2:${AWS::AccountId}:stream/${Env}-sundae-sync-v2--*'
+
+    KinesisRoleInstanceProfile:
+        Type: AWS::IAM::InstanceProfile
+        Description: "The instance profile, so that this can be attached to an EC2 instance"
+        Properties:
+            InstanceProfileName: !Sub "${Env}-sundae-sync-v2-role"
+            Role: !Ref KinesisRole
