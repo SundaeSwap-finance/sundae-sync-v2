@@ -115,6 +115,7 @@ Resources:
                           - 'kinesis:List*'
                           - 'kinesis:PutRecord'
                           - 'kinesis:PutRecords'
+                          - 'kinesis:GetShardIterator'
                         Resource:
                           - !Sub 'arn:aws:kinesis:us-east-2:${AWS::AccountId}:stream/${Env}-sundae-sync-v2--*'
 
