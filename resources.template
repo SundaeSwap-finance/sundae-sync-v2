@@ -120,4 +120,5 @@ Resources:
         Description: "The instance profile, so that this can be attached to an EC2 instance"
         Properties:
             InstanceProfileName: !Sub "${Env}-sundae-sync-v2-role"
-            Role: !Ref KinesisRole
+            Roles:
+              - !Ref KinesisRole
