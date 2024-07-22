@@ -96,8 +96,8 @@ Resources:
                           - 'dynamodb:Query'
                           - 'dynamodb:Scan'
                         Resource:
-                          - !Ref LockTable
-                          - !Ref DestinationTable
+                          - !GetAtt LockTable.Arn
+                          - !GetAtt DestinationTable.Arn
                       - Effect: Allow
                         Action:
                           - 's3:List*'
