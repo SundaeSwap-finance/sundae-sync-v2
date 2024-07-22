@@ -13,7 +13,6 @@ use utxorpc::spec::sync::BlockRef;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Destination {
     pub pk: String,
-    pub sk: String,
     pub stream_arn: String,
     pub shard_id: String,
     pub filter: Option<FilterConfig>,
@@ -62,7 +61,6 @@ impl Destination {
             .update_item()
             .table_name(table)
             .key("pk", AttributeValue::S(self.pk.clone()))
-            .key("sk", AttributeValue::S(self.sk.clone()))
             .condition_expression("last_seen_point = :last_point")
             .update_expression(
                 "SET last_seen_point = :new_point, sequence_number = :seq, recovery_points = :rotated_points",
@@ -97,7 +95,7 @@ impl Destination {
         } else {
             warn!(
                 "No sequence number for destination {}, starting from trim horizon",
-                self.sk
+                self.pk
             );
             shard_request = shard_request.shard_iterator_type(ShardIteratorType::TrimHorizon)
         }
@@ -106,7 +104,7 @@ impl Destination {
             .await?
             .shard_iterator
             .expect("failed to get shard iterator");
-        info!("Repairing destination {}", self.sk);
+        info!("Repairing destination {}", self.pk);
         loop {
             let records = kinesis
                 .get_records()
@@ -138,7 +136,7 @@ impl Destination {
                 break;
             }
         }
-        trace!("Repaired destination {} sequence number", self.sk);
+        trace!("Repaired destination {} sequence number", self.pk);
 
         Ok(self.last_seen_point.clone())
     }

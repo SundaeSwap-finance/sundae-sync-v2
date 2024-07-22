@@ -13,7 +13,6 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct LockRecord {
     pub pk: String,
-    pub sk: String,
     pub instance_id: String,
     pub expiration: u64,
 }
@@ -24,8 +23,9 @@ pub struct Lock {
     pub record: LockRecord,
     /// Whether the lock is currently held or not, mostly used to avoid stack explosions in drop
     locked: bool,
-    /// Optionally, a dynamodb client, set if we have the lock
+    // The dynamodb client and table used to acquire the lock
     dynamo: DynamoClient,
+    table: String,
 }
 
 impl Debug for Lock {
@@ -36,20 +36,24 @@ impl Debug for Lock {
 
 impl Lock {
     /// Acquire a new lock from scratch
-    pub async fn acquire(dynamo: DynamoClient, duration: Duration) -> Result<Option<Lock>> {
+    pub async fn acquire(
+        dynamo: DynamoClient,
+        duration: Duration,
+        table: String,
+    ) -> Result<Option<Lock>> {
         trace!("Acquiring lock");
         // We do this by constructing the lock, and then trying to renew it
         let instance_id = Uuid::new_v4().to_string();
         let lock_record = LockRecord {
-            pk: "sundae-sync-v2-lock".to_string(),
-            sk: "sundae-sync-v2-lock".to_string(),
+            pk: "sundae-sync-v2".to_string(),
             instance_id: instance_id.clone(),
             expiration: 0,
         };
         let lock = Lock {
             locked: false,
-            dynamo: dynamo.clone(),
             record: lock_record,
+            dynamo: dynamo.clone(),
+            table,
         };
         lock.renew(duration).await
     }
@@ -70,7 +74,7 @@ impl Lock {
         let result = self
             .dynamo
             .put_item()
-            .table_name("sundae-sync-v2-test-table")
+            .table_name(&self.table)
             .set_item(Some(to_item(&self.record)?))
             .condition_expression(
                 "attribute_not_exists(pk) OR instance_id = :instance_id OR expiration < :now",
@@ -115,9 +119,8 @@ impl Lock {
             let result = self
                 .dynamo
                 .delete_item()
-                .table_name("sundae-sync-v2-test-table")
-                .key("pk", AttributeValue::S("sundae-sync-v2-lock".to_string()))
-                .key("sk", AttributeValue::S("sundae-sync-v2-lock".to_string()))
+                .table_name(self.table)
+                .key("pk", AttributeValue::S("sundae-sync-v2".to_string()))
                 .condition_expression("attribute_not_exists(pk) OR instance_id = :instance_id")
                 .expression_attribute_values(
                     ":instance_id",

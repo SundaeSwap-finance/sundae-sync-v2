@@ -19,6 +19,7 @@ pub struct LockThread {
     pub lock_stall_window: Duration,
 
     pub dynamo: DynamoClient,
+    pub table: String,
 }
 
 impl LockThread {
@@ -40,7 +41,8 @@ impl LockThread {
                 break;
             }
             // Acquire the lock for a specific duration
-            let lock = Lock::acquire(self.dynamo.clone(), self.lock_duration).await?;
+            let lock =
+                Lock::acquire(self.dynamo.clone(), self.lock_duration, self.table.clone()).await?;
             info!("Done");
             match lock {
                 None => {

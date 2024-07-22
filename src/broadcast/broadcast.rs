@@ -37,14 +37,9 @@ impl Broadcaster {
     ) -> Result<Self> {
         // Load destinations from dynamo
         let resp = dynamo
-            .query()
+            .scan()
             .consistent_read(true)
-            .key_condition_expression("pk = :key")
             .filter_expression("enabled = :enabled")
-            .expression_attribute_values(
-                ":key",
-                AttributeValue::S("sundae-sync-v2-destination".into()),
-            )
             .expression_attribute_values(":enabled", AttributeValue::Bool(true))
             .table_name(&table)
             .send()
@@ -96,7 +91,7 @@ impl Broadcaster {
                 let result = self
                     .kinesis
                     .put_record()
-                    .partition_key("partition")
+                    .partition_key("sundae-sync-v2")
                     .data(Blob::new(message_bytes.clone()))
                     .stream_arn(&destination.stream_arn)
                     .send()
@@ -109,7 +104,7 @@ impl Broadcaster {
                         Some(result.sequence_number),
                     )
                     .await?;
-                destinations.push(destination.sk.clone());
+                destinations.push(destination.pk.clone());
             } else {
                 // If the block doesn't apply, we still advance the point
                 // with the same sequence number

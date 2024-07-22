@@ -20,4 +20,13 @@ pub struct Args {
     /// The URL of the utxorpc server to connect to
     #[arg(short, long, env("UTXO_RPC_URL"), conflicts_with = "socket_path")]
     pub utxo_rpc_url: Option<String>,
+
+    #[arg(short, long, env("ARCHIVE_BUCKET"))]
+    pub archive_bucket: String,
+    #[arg(short, long, env("LOCK_TABLE"))]
+    pub lock_table: String,
+    #[arg(short, long, env("DESTINATION_TABLE"))]
+    pub destination_table: String,
+    #[arg(short, long, env("UTXO_TABLE"))]
+    pub utxo_table: String,
 }

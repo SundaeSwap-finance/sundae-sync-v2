@@ -59,20 +59,19 @@ async fn main() -> Result<()> {
             lock_renew_freq: Duration::from_secs(10),
             lock_stall_window: Duration::from_secs(5),
             dynamo: dynamo_client.clone(),
+            table: args.lock_table,
         };
 
         let archive = Archive {
-            bucket: "preview-529991308818-sundae-sync-v2-test-bucket".to_string(),
-            table: "sundae-sync-v2-test-table".to_string(),
+            bucket: args.archive_bucket,
             s3: s3_client,
-            dynamo: dynamo_client.clone(),
         };
 
         let worker = Worker {
             dynamo: dynamo_client.clone(),
             kinesis: kinesis_client.clone(),
             uri: args.utxo_rpc_url.unwrap(),
-            table: "sundae-sync-v2-test-table".to_string(),
+            table: args.destination_table,
             archive,
         };
 
