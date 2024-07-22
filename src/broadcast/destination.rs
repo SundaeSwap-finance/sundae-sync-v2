@@ -28,6 +28,8 @@ pub struct Destination {
     )]
     pub recovery_points: Vec<BlockRef>,
     pub enabled: bool,
+    #[serde(default)]
+    pub skip_repair: bool,
 }
 
 impl Destination {
@@ -83,6 +85,10 @@ impl Destination {
         dynamo: DynamoClient,
         table: String,
     ) -> Result<BlockRef> {
+        // Skip the repair step, and force using the last seen point
+        if self.skip_repair {
+            return Ok(self.last_seen_point.clone());
+        }
         // read from kinesis
         let mut shard_request = kinesis
             .get_shard_iterator()
