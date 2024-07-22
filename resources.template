@@ -95,6 +95,9 @@ Resources:
                           - 'dynamodb:GetItem'
                           - 'dynamodb:Query'
                           - 'dynamodb:Scan'
+                          - 'dynamodb:PutItem'
+                          - 'dynamodb:DeleteItem'
+                          - 'dynamodb:UpdateItem'
                         Resource:
                           - !GetAtt LockTable.Arn
                           - !GetAtt DestinationTable.Arn
