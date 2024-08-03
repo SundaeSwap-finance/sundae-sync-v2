@@ -19,10 +19,9 @@ impl Follower {
             .uri(uri)?
             .build::<CardanoSyncClient>()
             .await;
-        let mut tip = client.follow_tip(points).await?;
-        // TODO: https://github.com/txpipe/dolos/issues/294
-        _ = tip.event().await.context("skipping first")?;
-        Ok(Self { tip })
+        Ok(Self {
+            tip: client.follow_tip(points).await?,
+        })
     }
 
     pub async fn next_event(&mut self) -> Result<(bool, Bytes, Block, BlockHeader)> {
