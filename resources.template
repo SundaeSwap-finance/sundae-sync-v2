@@ -142,6 +142,6 @@ Resources:
                 OnDemandTargetCapacity: 1
                 DefaultTargetCapacityType: 'spot'
             LaunchTemplateConfigs:
-                LaunchTemplateSpecification:
+                - LaunchTemplateSpecification:
                     LaunchTemplateName: sundae-sync-v2-template
                     Version: $Latest
