@@ -1,0 +1,15 @@
+[Unit]
+Description=Sundae Sync v2
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=ec2-user
+ExecStart=/home/ec2-user/sundae-sync-v2/sundae-sync-v2
+EnvFile=/home/ec2-user/sundae-sync-v2/sundae-sync-v2.env
+
+[Install]
+WantedBy=multi-user.target
