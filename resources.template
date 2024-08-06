@@ -145,3 +145,8 @@ Resources:
                 - LaunchTemplateSpecification:
                     LaunchTemplateName: sundae-sync-v2-template
                     Version: $Latest
+                  Overrides:
+                    - AvailabilityZone: us-east-2a
+                      SubnetId: subnet-08fe76b5c6dc035d0
+                    - AvailabilityZone: us-east-2b
+                      SubnetId: subnet-0797a471ba5029682
