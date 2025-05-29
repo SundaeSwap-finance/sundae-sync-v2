@@ -5,6 +5,23 @@ Parameters:
     Type: 'String'
     Default: 'local'
 
+Mappings:
+  Env:
+    local:
+      Subnets: []
+    preview:
+      Subnets:
+        - AvailabilityZone: us-east-2a
+          SubnetId: subnet-08fe76b5c6dc035d0
+        - AvailabilityZone: us-east-2b
+          SubnetId: subnet-0797a471ba5029682
+    cardano-tom:
+      Subnets:
+        - AvailabilityZone: us-east-2a
+          SubnetId: subnet-0b2bd78e9b1a2341f
+        - AvailabilityZone: us-east-2b
+          SubnetId: subnet-0c9ad41fc95858678
+
 Resources:
     ArchiveBucket:
         Type: AWS::S3::Bucket
@@ -145,8 +162,4 @@ Resources:
                 - LaunchTemplateSpecification:
                     LaunchTemplateName: sundae-sync-v2-template
                     Version: $Latest
-                  Overrides:
-                    - AvailabilityZone: us-east-2a
-                      SubnetId: subnet-08fe76b5c6dc035d0
-                    - AvailabilityZone: us-east-2b
-                      SubnetId: subnet-0797a471ba5029682
+                  Overrides: !FindInMap [Env, !Ref Env, Subnets]
