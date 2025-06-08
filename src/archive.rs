@@ -1,11 +1,15 @@
 use std::time::SystemTime;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use aws_sdk_dynamodb::{types::{TransactWriteItem, Update}, Client as DynamoClient};
 use aws_sdk_s3::Client as S3Client;
+use futures::future::try_join_all;
 use hex::ToHex;
 use pallas::interop::utxorpc::{LedgerContext, Mapper};
+use serde::{Deserialize, Serialize};
+use serde_dynamo::{to_attribute_value, to_item};
 use tracing::trace;
-use utxorpc::spec::cardano::Block;
+use utxorpc::spec::cardano::{Block, TxOutput};
 
 use crate::utils::elapsed;
 
@@ -13,6 +17,26 @@ use crate::utils::elapsed;
 pub struct Archive {
     pub s3: S3Client,
     pub bucket: String,
+    pub dynamo: DynamoClient,
+    pub table_name: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct HeightRef {
+    pub pk: String,
+    pub sk: String,
+    pub hash: String,
+    pub location: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TxRef {
+    pub pk: String,
+    pub sk: String,
+    pub block: String,
+    pub location: String,
+    pub in_chain: bool,
+    pub utxos: Vec<TxOutput>,
 }
 
 fn block_hash_key(hash: impl ToHex) -> String {
@@ -40,6 +64,41 @@ impl Archive {
         // Save the raw bytes of the block, indexed by its hash
         self.save_raw_block(&header.hash, bytes).await?;
 
+        // Then, save various lookups in dynamodb
+        let location = block_hash_key(&header.hash);
+        let mut tasks = vec![];
+        let height_ref = HeightRef {
+                            pk: format!("height:{}", header.height),
+                            sk: "".to_string(),
+                            hash: header.hash.encode_hex(),
+                            location: location.clone(),
+                        };
+        tasks.push(
+            self.dynamo.put_item()
+                .table_name(self.table_name.clone())
+                .set_item(Some(to_item(height_ref)?))
+                .send()
+        );
+        let body = block.body.clone().context("expected block to have a body")?;
+        for tx in body.tx {
+            let tx_ref = TxRef {
+                pk: format!("tx:{}", tx.hash.encode_hex::<String>()),
+                sk: "".to_string(),
+                block: header.hash.encode_hex(),
+                location: location.clone(),
+                in_chain: true,
+                utxos: tx.outputs.clone(),
+            };
+            tasks.push(
+                self.dynamo.put_item()
+                    .table_name(self.table_name.clone())
+                    .set_item(Some(to_item(tx_ref)?))
+                    .send()
+            );
+        }
+
+        try_join_all(tasks).await.context("failed to save pointers to dynamodb")?;
+
         trace!("Finished saving block (elapsed={:?})", elapsed(start));
         Ok(())
     }
@@ -59,8 +118,20 @@ impl Archive {
         Ok(block)
     }
 
-    pub async fn unsave(&self, _block: &Block) -> Result<()> {
-        // Might add something here later
+    pub async fn unsave(&self, block: &Block) -> Result<()> {
+        let mut ddb_tx = self.dynamo.transact_write_items();
+        let block = block.body.clone().context("expected block body")?;
+        for tx in block.tx {
+            let tx_update = Update::builder()
+                .table_name(self.table_name.clone())
+                .key("pk", to_attribute_value(format!("tx:{}", tx.hash.encode_hex::<String>()))?)
+                .key("sk", to_attribute_value("")?)
+                .update_expression("SET #in_chain = :in_chain")
+                .expression_attribute_values(":in_chain", to_attribute_value(false)?).build()?;
+            let write_item = TransactWriteItem::builder().update(tx_update).build();
+            ddb_tx = ddb_tx.transact_items(write_item);
+        }
+        ddb_tx.send().await.context("failed to mark txs as off-chain")?;
         Ok(())
     }
 

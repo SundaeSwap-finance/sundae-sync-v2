@@ -63,8 +63,10 @@ async fn main() -> Result<()> {
         };
 
         let archive = Archive {
-            bucket: args.archive_bucket,
             s3: s3_client,
+            bucket: args.archive_bucket,
+            dynamo: dynamo_client.clone(),
+            table_name: args.lookup_table,
         };
 
         let worker = Worker {

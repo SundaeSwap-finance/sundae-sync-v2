@@ -27,6 +27,6 @@ pub struct Args {
     pub lock_table: String,
     #[arg(short, long, env("DESTINATION_TABLE"))]
     pub destination_table: String,
-    #[arg(short, long, env("UTXO_TABLE"))]
-    pub utxo_table: String,
+    #[arg(short, long, env("LOOKUP_TABLE"))]
+    pub lookup_table: String,
 }
