@@ -73,6 +73,7 @@ async fn main() -> Result<()> {
             dynamo: dynamo_client.clone(),
             kinesis: kinesis_client.clone(),
             uri: args.utxo_rpc_url.unwrap(),
+            api_key: args.utxo_rpc_api_key,
             table: args.destination_table,
             archive,
         };

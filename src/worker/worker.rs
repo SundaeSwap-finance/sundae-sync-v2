@@ -21,6 +21,7 @@ pub struct Worker {
     pub archive: Archive,
     pub table: String,
     pub uri: String,
+    pub api_key: Option<String>,
 }
 impl Worker {
     pub async fn worker_thread(
@@ -49,7 +50,7 @@ impl Worker {
             .iter()
             .min_by_key(|d| d.last_seen_point.index)
             .unwrap();
-        let intersect = earliest_point
+        let intersect: Vec<_> = earliest_point
             .recovery_points
             .iter()
             .cloned()
@@ -65,7 +66,7 @@ impl Worker {
                 .to_vec()
                 .encode_hex::<String>()
         );
-        let mut follower = Follower::new(&self.uri, intersect).await?;
+        let mut follower = Follower::new(&self.uri, &self.api_key, intersect).await?;
 
         let mut undo_stack = vec![];
 

@@ -14,29 +14,42 @@ pub struct Follower {
 }
 
 impl Follower {
-    pub async fn new(uri: &String, points: Vec<BlockRef>) -> Result<Self> {
-        let mut client = ClientBuilder::new()
-            .uri(uri)?
-            .build::<CardanoSyncClient>()
-            .await;
+    pub async fn new(uri: &String, api_key: &Option<String>, points: Vec<BlockRef>) -> Result<Self> {
+        let mut client_builder = ClientBuilder::new().uri(uri)?;
+        if let Some(api_key) = api_key {
+            client_builder = client_builder.metadata("dmtr-api-key", api_key)?;
+        }
+        let mut client = client_builder.build::<CardanoSyncClient>().await;
         Ok(Self {
             tip: client.follow_tip(points).await?,
         })
     }
 
     pub async fn next_event(&mut self) -> Result<(bool, Bytes, Block, BlockHeader)> {
-        let event = self.tip.event().await.context("failed to grab tip")?;
-        let (bytes, block) = match &event {
-            TipEvent::Apply(block) | TipEvent::Undo(block) => {
-                let bytes = block.native.clone();
-                let block = block.parsed.clone().expect("must include block");
+        let (bytes, block, roll_forward) = loop {
+            let event = match self.tip.event().await {
+                Ok(evt) => evt,
+                Err(err) => {
+                    println!("Failed to parse event: {}", err);
+                    continue;
+                },
+            };
+            match &event {
+                Some(TipEvent::Apply(block)) | Some(TipEvent::Undo(block)) => {
+                    let bytes = block.native.clone();
+                    let block = block.parsed.clone().expect("must include block");
 
-                (bytes, block)
-            }
-            TipEvent::Reset(_) => todo!(),
+                    break (bytes, block, matches!(event, Some(TipEvent::Apply(_))));
+                }
+                Some(TipEvent::Reset(b)) => {
+                    println!("Resetting to {:?}", b);
+                    continue;
+                }
+                None => return Err(anyhow::anyhow!("Stream closed")),
+            };
         };
         let header = block.header.as_ref().expect("must include header").clone();
 
-        Ok((matches!(event, TipEvent::Apply(_)), bytes, block, header))
+        Ok((roll_forward, bytes, block, header))
     }
 }

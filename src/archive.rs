@@ -11,6 +11,7 @@ use serde_dynamo::{to_attribute_value, to_item};
 use tracing::trace;
 use utxorpc::spec::cardano::{Block, TxOutput};
 
+
 use crate::utils::elapsed;
 
 #[derive(Clone)]
@@ -69,7 +70,7 @@ impl Archive {
         let mut tasks = vec![];
         let height_ref = HeightRef {
                             pk: format!("height:{}", header.height),
-                            sk: "".to_string(),
+                            sk: "height".to_string(),
                             hash: header.hash.encode_hex(),
                             location: location.clone(),
                         };
@@ -83,7 +84,7 @@ impl Archive {
         for tx in body.tx {
             let tx_ref = TxRef {
                 pk: format!("tx:{}", tx.hash.encode_hex::<String>()),
-                sk: "".to_string(),
+                sk: "tx".to_string(),
                 block: header.hash.encode_hex(),
                 location: location.clone(),
                 in_chain: true,
@@ -119,19 +120,21 @@ impl Archive {
     }
 
     pub async fn unsave(&self, block: &Block) -> Result<()> {
-        let mut ddb_tx = self.dynamo.transact_write_items();
         let block = block.body.clone().context("expected block body")?;
-        for tx in block.tx {
-            let tx_update = Update::builder()
-                .table_name(self.table_name.clone())
-                .key("pk", to_attribute_value(format!("tx:{}", tx.hash.encode_hex::<String>()))?)
-                .key("sk", to_attribute_value("")?)
-                .update_expression("SET #in_chain = :in_chain")
-                .expression_attribute_values(":in_chain", to_attribute_value(false)?).build()?;
-            let write_item = TransactWriteItem::builder().update(tx_update).build();
-            ddb_tx = ddb_tx.transact_items(write_item);
+        if block.tx.len() > 0 {
+            let mut ddb_tx = self.dynamo.transact_write_items();
+            for tx in block.tx {
+                let tx_update = Update::builder()
+                    .table_name(self.table_name.clone())
+                    .key("pk", to_attribute_value(format!("tx:{}", tx.hash.encode_hex::<String>()))?)
+                    .key("sk", to_attribute_value("tx")?)
+                    .update_expression("SET in_chain = :in_chain")
+                    .expression_attribute_values(":in_chain", to_attribute_value(false)?).build()?;
+                let write_item = TransactWriteItem::builder().update(tx_update).build();
+                ddb_tx = ddb_tx.transact_items(write_item);
+            }
+            ddb_tx.send().await.context("failed to mark txs as off-chain")?;
         }
-        ddb_tx.send().await.context("failed to mark txs as off-chain")?;
         Ok(())
     }
 
