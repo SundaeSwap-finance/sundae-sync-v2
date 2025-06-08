@@ -7,14 +7,18 @@ use utxorpc::{
     Cardano, CardanoSyncClient, ClientBuilder, LiveTip, TipEvent,
 };
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 pub struct Follower {
     tip: LiveTip<Cardano>,
 }
 
 impl Follower {
-    pub async fn new(uri: &String, api_key: &Option<String>, points: Vec<BlockRef>) -> Result<Self> {
+    pub async fn new(
+        uri: &String,
+        api_key: &Option<String>,
+        points: Vec<BlockRef>,
+    ) -> Result<Self> {
         let mut client_builder = ClientBuilder::new().uri(uri)?;
         if let Some(api_key) = api_key {
             client_builder = client_builder.metadata("dmtr-api-key", api_key)?;
@@ -30,9 +34,10 @@ impl Follower {
             let event = match self.tip.event().await {
                 Ok(evt) => evt,
                 Err(err) => {
+                    // TODO: dolos bug? seems to send an empty event after a rollback
                     println!("Failed to parse event: {}", err);
                     continue;
-                },
+                }
             };
             match &event {
                 Some(TipEvent::Apply(block)) | Some(TipEvent::Undo(block)) => {

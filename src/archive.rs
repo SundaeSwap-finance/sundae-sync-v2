@@ -1,7 +1,10 @@
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
-use aws_sdk_dynamodb::{types::{TransactWriteItem, Update}, Client as DynamoClient};
+use aws_sdk_dynamodb::{
+    types::{TransactWriteItem, Update},
+    Client as DynamoClient,
+};
 use aws_sdk_s3::Client as S3Client;
 use futures::future::try_join_all;
 use hex::ToHex;
@@ -10,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use serde_dynamo::{to_attribute_value, to_item};
 use tracing::trace;
 use utxorpc::spec::cardano::{Block, TxOutput};
-
 
 use crate::utils::elapsed;
 
@@ -69,18 +71,22 @@ impl Archive {
         let location = block_hash_key(&header.hash);
         let mut tasks = vec![];
         let height_ref = HeightRef {
-                            pk: format!("height:{}", header.height),
-                            sk: "height".to_string(),
-                            hash: header.hash.encode_hex(),
-                            location: location.clone(),
-                        };
+            pk: format!("height:{}", header.height),
+            sk: "height".to_string(),
+            hash: header.hash.encode_hex(),
+            location: location.clone(),
+        };
         tasks.push(
-            self.dynamo.put_item()
+            self.dynamo
+                .put_item()
                 .table_name(self.table_name.clone())
                 .set_item(Some(to_item(height_ref)?))
-                .send()
+                .send(),
         );
-        let body = block.body.clone().context("expected block to have a body")?;
+        let body = block
+            .body
+            .clone()
+            .context("expected block to have a body")?;
         for tx in body.tx {
             let tx_ref = TxRef {
                 pk: format!("tx:{}", tx.hash.encode_hex::<String>()),
@@ -91,14 +97,17 @@ impl Archive {
                 utxos: tx.outputs.clone(),
             };
             tasks.push(
-                self.dynamo.put_item()
+                self.dynamo
+                    .put_item()
                     .table_name(self.table_name.clone())
                     .set_item(Some(to_item(tx_ref)?))
-                    .send()
+                    .send(),
             );
         }
 
-        try_join_all(tasks).await.context("failed to save pointers to dynamodb")?;
+        try_join_all(tasks)
+            .await
+            .context("failed to save pointers to dynamodb")?;
 
         trace!("Finished saving block (elapsed={:?})", elapsed(start));
         Ok(())
@@ -126,14 +135,21 @@ impl Archive {
             for tx in block.tx {
                 let tx_update = Update::builder()
                     .table_name(self.table_name.clone())
-                    .key("pk", to_attribute_value(format!("tx:{}", tx.hash.encode_hex::<String>()))?)
+                    .key(
+                        "pk",
+                        to_attribute_value(format!("tx:{}", tx.hash.encode_hex::<String>()))?,
+                    )
                     .key("sk", to_attribute_value("tx")?)
                     .update_expression("SET in_chain = :in_chain")
-                    .expression_attribute_values(":in_chain", to_attribute_value(false)?).build()?;
+                    .expression_attribute_values(":in_chain", to_attribute_value(false)?)
+                    .build()?;
                 let write_item = TransactWriteItem::builder().update(tx_update).build();
                 ddb_tx = ddb_tx.transact_items(write_item);
             }
-            ddb_tx.send().await.context("failed to mark txs as off-chain")?;
+            ddb_tx
+                .send()
+                .await
+                .context("failed to mark txs as off-chain")?;
         }
         Ok(())
     }

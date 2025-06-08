@@ -6,11 +6,7 @@ use clap::{command, Parser};
 #[command(propagate_version = true)]
 pub struct Args {
     /// The path to the node.sock file to connect to a local node; currently not supported
-    #[arg(
-        long,
-        env("CARDANO_NODE_SOCKET_PATH"),
-        requires = "network_magic"
-    )]
+    #[arg(long, env("CARDANO_NODE_SOCKET_PATH"), requires = "network_magic")]
     pub socket_path: Option<String>,
     /// The network magic used to handshake with that node; defaults to mainnet
     #[arg(long, env("CARDANO_NETWORK_MAGIC"))]
