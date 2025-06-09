@@ -140,6 +140,7 @@ Resources:
                         Resource:
                           - !GetAtt LockTable.Arn
                           - !GetAtt DestinationTable.Arn
+                          - !GetAtt LookupTable.Arn
                       - Effect: Allow
                         Action:
                           - 's3:List*'
