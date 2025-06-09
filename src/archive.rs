@@ -39,7 +39,9 @@ pub struct TxRef {
     pub block: String,
     pub location: String,
     pub in_chain: bool,
+    pub successful: bool,
     pub utxos: Vec<TxOutput>,
+    pub collateral_out: Option<TxOutput>,
 }
 
 fn block_hash_key(hash: impl ToHex) -> String {
@@ -95,6 +97,8 @@ impl Archive {
                 location: location.clone(),
                 in_chain: true,
                 utxos: tx.outputs.clone(),
+                successful: tx.successful,
+                collateral_out: tx.collateral.and_then(|c| c.collateral_return),
             };
             tasks.push(
                 self.dynamo
