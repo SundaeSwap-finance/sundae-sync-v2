@@ -183,7 +183,7 @@ Resources:
                           DeleteOnTermination: true
                           Iops: 3000
                           SnapshotId: !FindInMap [Env, !Ref Env, Snapshot]
-                          Throuthput: 125
+                          Throughput: 125
                           VolumeSize: 512
                           VolumeType: "gp3"
                 IamInstanceProfile:
