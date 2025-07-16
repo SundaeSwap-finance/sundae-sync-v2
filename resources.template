@@ -10,12 +10,16 @@ Mappings:
     local:
       Subnets: []
     preview:
+      Image: 'ami-00fa9ca3dffffc050'
+      Snapshot: 'snap-04d9283dd7b270dc8'
       Subnets:
         - AvailabilityZone: us-east-2a
           SubnetId: subnet-08fe76b5c6dc035d0
         - AvailabilityZone: us-east-2b
           SubnetId: subnet-0797a471ba5029682
     cardano-tom:
+      Image: 'ami-07feb56dadb897a30'
+      Snapshot: 'snap-047e50379c2d1fce9'
       Subnets:
         - AvailabilityZone: us-east-2a
           SubnetId: subnet-043cc56533b840171
@@ -168,6 +172,36 @@ Resources:
             Roles:
               - !Ref KinesisRole
 
+    SundaeSyncLaunchTemplate:
+        Type: AWS::EC2::LaunchTemplate
+        Properties:
+            LaunchTemplateName: !Sub "${Env}-sundae-sync-v2-template"
+            LaunchTemplateData:
+                BlockDeviceMappings:
+                    - DeviceName: "/dev/xvda"
+                      Ebs:
+                          DeleteOnTermination: true
+                          Iops: 3000
+                          SnapshotId: !FindInMap [Env, !Ref Env, Snapshot]
+                          Throuthput: 125
+                          VolumeSize: 512
+                          VolumeType: "gp3"
+                IamInstanceProfile:
+                    Name: !Ref KinesisRoleInstanceProfile
+                ImageId: !FindInMap [Env, !Ref Env, Image]
+                InstanceType: t2.small
+                KeyName: pi
+                PrivateDnsNameOptions:
+                    HostnameType: resource-name
+                NetworkInterfaces:
+                    - DeviceIndex: 0
+                      AssociatePublicIpAddress: true
+            TagSpecifications:
+                ResourceType: "launch-template"
+                Tags:
+                    - Key: sundae-labs:cost-allocation:Service
+                      Value: sundae-sync-v2
+
     SundaeSyncInstances:
         Type: 'AWS::EC2::EC2Fleet'
         Properties:
@@ -183,6 +217,6 @@ Resources:
                 DefaultTargetCapacityType: 'spot'
             LaunchTemplateConfigs:
                 - LaunchTemplateSpecification:
-                    LaunchTemplateName: sundae-sync-v2-template
+                    LaunchTemplateName: !GetAtt SundaeSyncLaunchTemplate.Name
                     Version: $Latest
                   Overrides: !FindInMap [Env, !Ref Env, Subnets]
