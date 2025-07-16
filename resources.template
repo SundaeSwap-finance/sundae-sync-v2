@@ -18,9 +18,9 @@ Mappings:
     cardano-tom:
       Subnets:
         - AvailabilityZone: us-east-2a
-          SubnetId: subnet-0b2bd78e9b1a2341f
+          SubnetId: subnet-043cc56533b840171
         - AvailabilityZone: us-east-2b
-          SubnetId: subnet-0c9ad41fc95858678
+          SubnetId: subnet-069b2d28c03bbeaa1
 
 Resources:
     ArchiveBucket:
