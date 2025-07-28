@@ -53,7 +53,7 @@ impl Destination {
         let recovery_points = self
             .recovery_points
             .iter()
-            .map(|p| AttributeValue::S(point_to_string(&p)))
+            .map(|p| AttributeValue::S(point_to_string(p)))
             .collect();
         // Update the destination (assuming someone else hasn't already updated it) to
         // - set the last seen point
@@ -71,7 +71,7 @@ impl Destination {
                 ":last_point",
                 AttributeValue::S(point_to_string(&previous_point)),
             )
-            .expression_attribute_values(":seq", seq_num.map_or(AttributeValue::Null(true), |s| AttributeValue::S(s)))
+            .expression_attribute_values(":seq", seq_num.map_or(AttributeValue::Null(true), AttributeValue::S))
             .expression_attribute_values(":new_point", AttributeValue::S(point_to_string(&point)))
             .expression_attribute_values(":rotated_points", AttributeValue::L(recovery_points))
             .send()
@@ -129,7 +129,7 @@ impl Destination {
                 records.millis_behind_latest
             );
             let millis_behind_latest = records.millis_behind_latest.unwrap_or(0);
-            if records.records.len() > 0 {
+            if !records.records.is_empty() {
                 let last_record = records.records.into_iter().last().unwrap();
                 let seq_no = last_record.sequence_number;
                 let data = last_record.data.into_inner();
@@ -174,7 +174,7 @@ where
 pub fn string_to_point(s: String) -> Result<BlockRef> {
     let parts: Vec<_> = s.split('/').collect();
     let index = parts[0].parse()?;
-    let hash = Bytes::from_iter(hex::decode(parts[1])?.into_iter());
+    let hash = Bytes::from_iter(hex::decode(parts[1])?);
     Ok(BlockRef { index, hash })
 }
 pub fn deserialize_point<'de, D>(deserializer: D) -> std::result::Result<BlockRef, D::Error>
@@ -199,7 +199,6 @@ where
                     serde::de::Error::custom(format!("failed to deserialize point: {}", err))
                 })
             })
-            .into_iter()
             .collect()
     })
 }

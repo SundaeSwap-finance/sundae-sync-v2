@@ -654,6 +654,12 @@ checksum = "6107fe1be6682a68940da878d9e9f5e90ca5745b3dec9fd1bb393c8777d4f581"
 
 [[package]]
 name = "base64"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
+
+[[package]]
+name = "base64"
 version = "0.21.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
@@ -2558,6 +2564,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_bytes_base64"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4819e3ddc3f4cdad9c48eb2fe72aa364b88534a6389f70d4d9a0fb00a6b3aa90"
+dependencies = [
+ "base64 0.13.1",
+ "serde",
+]
+
+[[package]]
 name = "serde_derive"
 version = "1.0.204"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2742,6 +2758,7 @@ dependencies = [
  "prost 0.12.6",
  "serde",
  "serde_bytes",
+ "serde_bytes_base64",
  "serde_dynamo",
  "serde_json",
  "tokio",

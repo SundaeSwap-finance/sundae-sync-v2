@@ -44,26 +44,22 @@ pub enum FilterConfig {
     },
 }
 
-fn any_inputs_and_outputs<F>(tx: &Tx, f: F) -> bool
+fn any_inputs_and_outputs<F>(tx: &Tx, filter: F) -> bool
 where
     F: Fn(&TxOutput) -> bool,
 {
     let (inputs, outputs) = (tx.inputs.iter(), tx.outputs.iter());
-    if outputs.into_iter().any(|output| f(output)) {
+    if outputs.into_iter().any(&filter) {
         return true;
     }
-    if inputs
+    inputs
         .into_iter()
         // TODO: find out why as_output is coming back none so often
-        .any(|input| input.as_output.as_ref().map_or(false, |output| f(output)))
-    {
-        return true;
-    }
-    return false;
+        .any(|input| input.as_output.as_ref().map_or(false, &filter))
 }
 
 impl TokenFilter {
-    pub fn applies(&self, assets: &Vec<Multiasset>) -> bool {
+    pub fn applies(&self, assets: &[Multiasset]) -> bool {
         match self {
             TokenFilter::Policy { policy } => assets.iter().any(|a| a.policy_id == policy),
             TokenFilter::AssetId { policy, asset_name } => assets

@@ -10,9 +10,10 @@ use futures::future::try_join_all;
 use hex::ToHex;
 use pallas::interop::utxorpc::{LedgerContext, Mapper};
 use serde::{Deserialize, Serialize};
+use serde_bytes_base64::Bytes;
 use serde_dynamo::{to_attribute_value, to_item};
 use tracing::trace;
-use utxorpc::spec::cardano::{Block, TxOutput};
+use utxorpc::spec::cardano::{Block, Datum as utxorpcDatum, Multiasset, Script};
 
 use crate::utils::elapsed;
 
@@ -32,7 +33,42 @@ pub struct HeightRef {
     pub location: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum Datum {
+    Structured(utxorpcDatum),
+    Raw(Bytes),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TxOutput {
+    /// Address receiving the output.
+    pub address: Bytes,
+    /// Amount of ADA in the output.
+    pub coin: u64,
+    /// Additional native (non-ADA) assets in the output.
+    pub assets: Vec<Multiasset>,
+    /// Plutus data associated with the output.
+    pub datum: Option<Datum>,
+    /// Script associated with the output.
+    pub script: Option<Script>,
+}
+
+impl From<utxorpc::spec::cardano::TxOutput> for TxOutput {
+    fn from(value: utxorpc::spec::cardano::TxOutput) -> Self {
+        TxOutput {
+            address: value.address.to_vec().into(),
+            coin: value.coin,
+            assets: value.assets.to_vec(),
+            datum: value
+                .datum
+                .map(|d| Datum::Raw(d.original_cbor.to_vec().into())),
+            script: value.script,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct TxRef {
     pub pk: String,
     pub sk: String,
@@ -96,9 +132,11 @@ impl Archive {
                 block: header.hash.encode_hex(),
                 location: location.clone(),
                 in_chain: true,
-                utxos: tx.outputs.clone(),
+                utxos: tx.outputs.into_iter().map(|o| o.into()).collect(),
                 successful: tx.successful,
-                collateral_out: tx.collateral.and_then(|c| c.collateral_return),
+                collateral_out: tx
+                    .collateral
+                    .and_then(|c| c.collateral_return.map(|o| o.into())),
             };
             tasks.push(
                 self.dynamo
@@ -112,7 +150,6 @@ impl Archive {
         try_join_all(tasks)
             .await
             .context("failed to save pointers to dynamodb")?;
-
         trace!("Finished saving block (elapsed={:?})", elapsed(start));
         Ok(())
     }
@@ -134,7 +171,7 @@ impl Archive {
 
     pub async fn unsave(&self, block: &Block) -> Result<()> {
         let block = block.body.clone().context("expected block body")?;
-        if block.tx.len() > 0 {
+        if !block.tx.is_empty() {
             let mut ddb_tx = self.dynamo.transact_write_items();
             for tx in block.tx {
                 let tx_update = Update::builder()

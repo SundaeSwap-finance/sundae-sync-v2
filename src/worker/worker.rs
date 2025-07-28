@@ -38,7 +38,7 @@ impl Worker {
         )
         .await?;
 
-        if broadcaster.destinations.len() == 0 {
+        if broadcaster.destinations.is_empty() {
             warn!("No enabled destinations, nothing to do");
             return Ok(());
         }
