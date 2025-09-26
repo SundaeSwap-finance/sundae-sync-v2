@@ -103,7 +103,12 @@ impl Archive {
         let header = block.header.as_ref().expect("must have header");
 
         // Save the raw bytes of the block, indexed by its hash
-        self.save_raw_block(&header.hash, bytes).await?;
+        self.save_raw_block(&header.hash, bytes)
+            .await
+            .context(format!(
+                "failed to save raw block {}",
+                hex::encode(&header.hash)
+            ))?;
 
         // Then, save various lookups in dynamodb
         let location = block_hash_key(&header.hash);

@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoClient};
 use aws_sdk_kinesis::Client as KinesisClient;
 use aws_sdk_s3::primitives::Blob;
@@ -85,7 +85,8 @@ impl Broadcaster {
                             .as_millis() as u64;
                         now < *deadline
                     })
-                    .await?;
+                    .await
+                    .context("failed checking for deadline")?;
 
                 // then send to kinesis, and save the point/seq number back to the destination
                 let result = self
@@ -95,7 +96,8 @@ impl Broadcaster {
                     .data(Blob::new(message_bytes.clone()))
                     .stream_arn(&destination.stream_arn)
                     .send()
-                    .await?;
+                    .await
+                    .context("failed writing to kinesis")?;
                 destination
                     .commit(
                         &self.dynamo,
@@ -103,7 +105,8 @@ impl Broadcaster {
                         message.advance.clone(),
                         Some(result.sequence_number),
                     )
-                    .await?;
+                    .await
+                    .context(format!("failed committing destination {}", destination.pk))?;
                 destinations.push(destination.pk.clone());
             } else {
                 // If the block doesn't apply, we still advance the point
@@ -117,7 +120,11 @@ impl Broadcaster {
                         message.advance.clone(),
                         destination.sequence_number.clone(),
                     )
-                    .await?;
+                    .await
+                    .context(format!(
+                        "failed advancing sequence number for destination {}",
+                        destination.pk
+                    ))?;
             }
         }
         Ok(destinations)

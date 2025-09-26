@@ -13,7 +13,7 @@ use crate::{
     broadcast::{BroadcastMessage, Broadcaster},
     utils::elapsed,
 };
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 pub struct Worker {
     pub dynamo: DynamoClient,
@@ -36,14 +36,18 @@ impl Worker {
             self.kinesis.clone(),
             lock_deadline,
         )
-        .await?;
+        .await
+        .context("failed to start broadcaster")?;
 
         if broadcaster.destinations.is_empty() {
             warn!("No enabled destinations, nothing to do");
             return Ok(());
         }
 
-        broadcaster.repair().await?;
+        broadcaster
+            .repair()
+            .await
+            .context("failed to repair broadcaster")?;
 
         let earliest_point = broadcaster
             .destinations
@@ -66,7 +70,9 @@ impl Worker {
                 .to_vec()
                 .encode_hex::<String>()
         );
-        let mut follower = Follower::new(&self.uri, &self.api_key, intersect).await?;
+        let mut follower = Follower::new(&self.uri, &self.api_key, intersect)
+            .await
+            .context("failed to start follower")?;
 
         let mut undo_stack = vec![];
 
@@ -77,7 +83,7 @@ impl Worker {
                     bail!("No block in 5 minutes, failing over to another node");
                 },
                 result = follower.next_event() => {
-                    let (is_roll_forward, bytes, block, header) = result?;
+                    let (is_roll_forward, bytes, block, header) = result.context("failed to receive next event from follower")?;
                     let block_hash: String = header.hash.encode_hex();
 
                     let start = SystemTime::now();
@@ -86,19 +92,19 @@ impl Worker {
                         hash: header.hash,
                     };
                     if is_roll_forward {
-                        self.archive.save(&block, bytes.to_vec()).await?;
+                        self.archive.save(&block, bytes.to_vec()).await.context(format!("failed to archive {}/{}", point.index, block_hash))?;
 
                         let start = SystemTime::now();
                         let destinations = broadcaster.broadcast(block, BroadcastMessage {
                             undo: undo_stack.clone(),
                             advance: point.clone(),
-                        }).await?;
+                        }).await.context(format!("failed to broadcast point {}/{}", point.index, block_hash))?;
                         trace!("Message broadcast (elapsed={:?})", SystemTime::now().duration_since(start)?);
                         undo_stack.clear();
                         info!("Roll forward {}/{} ({})", point.index, block_hash, destinations.join(", "));
                     } else {
                         trace!("Unsaving {}/{}", point.index, block_hash);
-                        self.archive.unsave(&block).await?;
+                        self.archive.unsave(&block).await.context(format!("failed to unsave point {}/{}", point.index, block_hash))?;
                         trace!("Block {}/{} unsaved (elapsed={:?})", point.index, block_hash, elapsed(start));
                         undo_stack.push(point.clone());
                         info!("Undo block {}/{}", point.index, block_hash);

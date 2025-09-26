@@ -1,7 +1,7 @@
 use crate::broadcast::BroadcastMessage;
 
 use super::filter::FilterConfig;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoClient};
 use aws_sdk_kinesis::{types::ShardIteratorType, Client as KinesisClient};
 use bytes::Bytes;
@@ -75,7 +75,8 @@ impl Destination {
             .expression_attribute_values(":new_point", AttributeValue::S(point_to_string(&point)))
             .expression_attribute_values(":rotated_points", AttributeValue::L(recovery_points))
             .send()
-            .await?;
+            .await
+            .context(format!("failed to update destination {}", self.pk))?;
         Ok(())
     }
 
@@ -107,9 +108,10 @@ impl Destination {
         }
         let mut iterator = shard_request
             .send()
-            .await?
+            .await
+            .context("failed to request shard iterator")?
             .shard_iterator
-            .expect("failed to get shard iterator");
+            .context("shard iterator is none")?;
         info!("Repairing destination {}", self.pk);
         loop {
             let records = kinesis
@@ -117,11 +119,15 @@ impl Destination {
                 .stream_arn(&self.stream_arn)
                 .shard_iterator(&iterator)
                 .send()
-                .await?;
+                .await
+                .context(format!(
+                    "failed to fetch records from stream {}",
+                    self.stream_arn
+                ))?;
 
             iterator = records
                 .next_shard_iterator
-                .expect("stream should be provisioned");
+                .context("next shard iterator is none")?;
 
             info!(
                 "Received {} records, {:?}ms behind tip",
@@ -133,9 +139,12 @@ impl Destination {
                 let last_record = records.records.into_iter().last().unwrap();
                 let seq_no = last_record.sequence_number;
                 let data = last_record.data.into_inner();
-                let message: BroadcastMessage = serde_json::from_slice(data.as_slice())?;
+                let message: BroadcastMessage =
+                    serde_json::from_slice(data.as_slice()).context("failed to parse data")?;
                 let advance = message.advance;
-                self.commit(&dynamo, &table, advance, Some(seq_no)).await?;
+                self.commit(&dynamo, &table, advance, Some(seq_no))
+                    .await
+                    .context("failed to commit while repairing")?;
             }
 
             if millis_behind_latest == 0 {
