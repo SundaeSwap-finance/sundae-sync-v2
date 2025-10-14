@@ -1,4 +1,4 @@
-use clap::{command, Parser};
+use clap::Parser;
 
 /// A small utility to crawl the Cardano blockchain and save sample data
 #[derive(Parser)]

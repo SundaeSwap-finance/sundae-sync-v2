@@ -76,7 +76,22 @@ impl Destination {
             .expression_attribute_values(":rotated_points", AttributeValue::L(recovery_points))
             .send()
             .await
-            .context(format!("failed to update destination {}", self.pk))?;
+            .map_err(|e| {
+                // Check if this is a conditional check failure, which indicates another worker
+                // has taken over (normal during failover)
+                if let Some(service_err) = e.as_service_error() {
+                    if service_err.is_conditional_check_failed_exception() {
+                        return anyhow::anyhow!(
+                            "Another worker has updated destination {} (likely failover occurred). \
+                             Expected point: {}, but destination has advanced. \
+                             This is normal behavior when a new worker takes over the lock.",
+                            self.pk,
+                            point_to_string(&previous_point)
+                        );
+                    }
+                }
+                anyhow::anyhow!("failed to update destination {}: {}", self.pk, e)
+            })?;
         Ok(())
     }
 

@@ -55,7 +55,7 @@ where
     inputs
         .into_iter()
         // TODO: find out why as_output is coming back none so often
-        .any(|input| input.as_output.as_ref().map_or(false, &filter))
+        .any(|input| input.as_output.as_ref().is_some_and(&filter))
 }
 
 impl TokenFilter {
@@ -73,7 +73,7 @@ impl FilterConfig {
     pub fn applies_block(&self, b: &Block) -> bool {
         b.body
             .as_ref()
-            .map_or(true, |body| body.tx.iter().any(|tx| self.applies(tx)))
+            .is_none_or(|body| body.tx.iter().any(|tx| self.applies(tx)))
     }
 
     pub fn applies(&self, tx: &Tx) -> bool {

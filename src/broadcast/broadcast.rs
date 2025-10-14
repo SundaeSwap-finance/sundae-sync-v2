@@ -73,7 +73,7 @@ impl Broadcaster {
             let applies = destination
                 .filter
                 .as_ref()
-                .map_or(true, |f| f.applies_block(&block));
+                .is_none_or(|f| f.applies_block(&block));
             // If so
             if applies {
                 // Check/wait for us to be comfortably within the lock expiration deadline

@@ -1,0 +1,4 @@
+[target.'cfg(all())']
+rustflags = [
+    "-A", "clippy::module_inception",
+]
