@@ -5,12 +5,25 @@ This repository is a ground-up rewrite of [sundae-sync](https://github.com/Sunda
 Sundae-sync is responsible for mirroring RollForward and RollBackward messages to a single kinesis stream.
 
 The rewrite seeks to address several goals:
+
 - Robust failover across multiple nodes
 - UtxoRPC support, for reduced resource consumption via [Dolos](https://github.com/TxPipe/dolos)
 - Rollforward and Undo messages, to avoid downstream consumers having to manage a cursor
 - Replication to multiple destinations with configurable filtering
 - Archive blocks to S3, enabling lookup and fast bulk replay
 - An indexable record of every UTXO in dynamodb
+
+## Client Libraries
+
+### Go Client
+
+A Go client library is provided for accessing indexed transaction data from DynamoDB:
+
+```bash
+go get github.com/SundaeSwap-finance/sundae-sync-v2/clients/go
+```
+
+See [clients/go/README.md](clients/go/README.md) for detailed usage documentation and examples.
 
 ## Architecture
 
