@@ -1,4 +1,6 @@
+use anyhow::Result;
 use bytes::Bytes;
+use tracing::warn;
 use utxorpc::{
     spec::{
         cardano::{Block, BlockHeader},
@@ -6,8 +8,6 @@ use utxorpc::{
     },
     Cardano, CardanoSyncClient, ClientBuilder, LiveTip, TipEvent,
 };
-
-use anyhow::Result;
 
 pub struct Follower {
     tip: LiveTip<Cardano>,
@@ -31,14 +31,8 @@ impl Follower {
 
     pub async fn next_event(&mut self) -> Result<(bool, Bytes, Block, BlockHeader)> {
         let (bytes, block, roll_forward) = loop {
-            let event = match self.tip.event().await {
-                Ok(evt) => evt,
-                Err(err) => {
-                    // TODO: dolos bug? seems to send an empty event after a rollback
-                    println!("Failed to parse event: {}", err);
-                    continue;
-                }
-            };
+            let event = self.tip.event().await?;
+
             match &event {
                 Some(TipEvent::Apply(block)) | Some(TipEvent::Undo(block)) => {
                     let bytes = block.native.clone();
@@ -47,7 +41,7 @@ impl Follower {
                     break (bytes, block, matches!(event, Some(TipEvent::Apply(_))));
                 }
                 Some(TipEvent::Reset(b)) => {
-                    println!("Resetting to {:?}", b);
+                    warn!("Upstream requested reset to {:?}", b);
                     continue;
                 }
                 None => return Err(anyhow::anyhow!("Stream closed")),
