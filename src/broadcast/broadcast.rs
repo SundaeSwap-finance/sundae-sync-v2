@@ -76,7 +76,13 @@ impl Broadcaster {
                 .is_none_or(|f| f.applies_block(&block));
             // If so
             if applies {
-                // Check/wait for us to be comfortably within the lock expiration deadline
+                // Safety check: ensure we're comfortably within the lock expiration deadline
+                // before sending to Kinesis. This is a defensive backup to the primary safety
+                // mechanism (lock renewal failure drops the worker future). This prevents
+                // sending duplicate Kinesis events if the lock expires but the worker hasn't
+                // been properly cancelled yet.
+                // TODO: Verify that lock renewal failure in lock_thread.rs fully cancels the
+                // worker future before relying solely on that mechanism.
                 self.deadline
                     .wait_for(|deadline| {
                         let now = SystemTime::now()

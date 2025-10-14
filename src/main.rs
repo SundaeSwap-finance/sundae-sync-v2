@@ -54,10 +54,10 @@ async fn main() -> Result<()> {
     {
         // Spawn a thread that runs our worker thread *only* when we have a lock thread
         let lock_thread = LockThread {
-            lock_duration: Duration::from_secs(20),
-            lock_acquire_freq: Duration::from_secs(5),
-            lock_renew_freq: Duration::from_secs(10),
-            lock_stall_window: Duration::from_secs(5),
+            lock_duration: Duration::from_secs(300),  // 5 minutes - worker deadline
+            lock_acquire_freq: Duration::from_secs(30),
+            lock_renew_freq: Duration::from_secs(60),
+            lock_stall_window: Duration::from_secs(30),
             dynamo: dynamo_client.clone(),
             table: args.lock_table,
         };
