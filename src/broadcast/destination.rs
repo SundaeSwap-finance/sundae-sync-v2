@@ -105,7 +105,11 @@ impl Destination {
         if self.skip_repair {
             return Ok(self.last_seen_point.clone());
         }
-        // read from kinesis
+
+        // Repair fills gaps where Kinesis broadcast succeeded but DynamoDB commit failed
+        // by reading messages from Kinesis (source of truth) and attempting to commit them.
+        // The conditional check in commit() prevents races with other workers.
+
         let mut shard_request = kinesis
             .get_shard_iterator()
             .stream_arn(&self.stream_arn)
@@ -127,8 +131,12 @@ impl Destination {
             .context("failed to request shard iterator")?
             .shard_iterator
             .context("shard iterator is none")?;
+
         info!("Repairing destination {}", self.pk);
-        loop {
+
+        // Limit repair iterations to prevent infinite loops
+        const MAX_REPAIR_ITERATIONS: usize = 1000;
+        for iteration in 0..MAX_REPAIR_ITERATIONS {
             let records = kinesis
                 .get_records()
                 .stream_arn(&self.stream_arn)
@@ -144,29 +152,57 @@ impl Destination {
                 .next_shard_iterator
                 .context("next shard iterator is none")?;
 
-            info!(
-                "Received {} records, {:?}ms behind tip",
-                records.records.len(),
-                records.millis_behind_latest
-            );
             let millis_behind_latest = records.millis_behind_latest.unwrap_or(0);
+
             if !records.records.is_empty() {
+                info!(
+                    "Repair iteration {}: {} records, {:?}ms behind tip",
+                    iteration,
+                    records.records.len(),
+                    millis_behind_latest
+                );
+
                 let last_record = records.records.into_iter().last().unwrap();
                 let seq_no = last_record.sequence_number;
                 let data = last_record.data.into_inner();
                 let message: BroadcastMessage =
                     serde_json::from_slice(data.as_slice()).context("failed to parse data")?;
-                let advance = message.advance;
-                self.commit(&dynamo, &table, advance, Some(seq_no))
-                    .await
-                    .context("failed to commit while repairing")?;
+                let point = message.advance;
+
+                // Try to commit with conditional check - this prevents zombie worker races
+                match self.commit(&dynamo, &table, point.clone(), Some(seq_no)).await {
+                    Ok(_) => {
+                        info!("Repaired destination {} to point {}", self.pk, point.index);
+                    }
+                    Err(e) => {
+                        // Check if this is a conditional check failure
+                        let err_msg = e.to_string();
+                        if err_msg.contains("Another worker has updated destination") {
+                            // Another worker already advanced past this point - we're caught up
+                            info!(
+                                "Destination {} already advanced past repair point {}, repair complete",
+                                self.pk, point.index
+                            );
+                            break;
+                        }
+                        // Other errors should propagate
+                        return Err(e);
+                    }
+                }
             }
 
             if millis_behind_latest == 0 {
+                info!("Repair complete for destination {}, caught up to tip", self.pk);
                 break;
             }
+
+            if iteration == MAX_REPAIR_ITERATIONS - 1 {
+                warn!(
+                    "Repair hit max iterations ({}) for destination {}, still {}ms behind",
+                    MAX_REPAIR_ITERATIONS, self.pk, millis_behind_latest
+                );
+            }
         }
-        trace!("Repaired destination {} sequence number", self.pk);
 
         Ok(self.last_seen_point.clone())
     }
