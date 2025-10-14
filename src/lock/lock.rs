@@ -113,36 +113,76 @@ impl Lock {
     pub async fn release(mut self) -> Result<()> {
         if self.locked {
             self.locked = false;
-            info!("Releasing lock");
-            // Delete from dynamodb, but only if:
-            // the lock doesn't exist, or the lock is held by us
-            let result = self
-                .dynamo
-                .delete_item()
-                .table_name(self.table)
-                .key("pk", AttributeValue::S("sundae-sync-v2".to_string()))
-                .condition_expression("attribute_not_exists(pk) OR instance_id = :instance_id")
-                .expression_attribute_values(
-                    ":instance_id",
-                    AttributeValue::S(self.record.instance_id.clone()),
-                )
-                .send()
-                .await;
-
-            match result {
-                Ok(_) => Ok(()),
-                Err(SdkError::ServiceError(err)) => {
-                    let err = err.into_err();
-                    if err.is_conditional_check_failed_exception() {
-                        Ok(())
-                    } else {
-                        Err(anyhow!("failed to release lock: {:?}", err))
-                    }
-                }
-                err => Err(anyhow!("failed to release lock: {:?}", err)),
-            }
+            info!("Releasing lock {}", self.record.instance_id);
+            self.release_impl().await
         } else {
             Ok(())
+        }
+    }
+
+    /// Internal implementation of lock release
+    async fn release_impl(&self) -> Result<()> {
+        // Delete from dynamodb, but only if:
+        // the lock doesn't exist, or the lock is held by us
+        let result = self
+            .dynamo
+            .delete_item()
+            .table_name(&self.table)
+            .key("pk", AttributeValue::S("sundae-sync-v2".to_string()))
+            .condition_expression("attribute_not_exists(pk) OR instance_id = :instance_id")
+            .expression_attribute_values(
+                ":instance_id",
+                AttributeValue::S(self.record.instance_id.clone()),
+            )
+            .send()
+            .await;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(SdkError::ServiceError(err)) => {
+                let err = err.into_err();
+                if err.is_conditional_check_failed_exception() {
+                    Ok(())
+                } else {
+                    Err(anyhow!("failed to release lock: {:?}", err))
+                }
+            }
+            err => Err(anyhow!("failed to release lock: {:?}", err)),
+        }
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        if self.locked {
+            // We're being dropped while still holding the lock
+            // This shouldn't happen in normal operation, but could occur during:
+            // - Panics or unwinding
+            // - Runtime shutdown
+            // Spawn a best-effort background task to release the lock
+            // This may not complete if the runtime is shutting down, but the lock
+            // will expire via TTL anyway
+            let dynamo = self.dynamo.clone();
+            let table = self.table.clone();
+            let instance_id = self.record.instance_id.clone();
+
+            info!("Lock {} dropped without explicit release, attempting cleanup", instance_id);
+
+            tokio::spawn(async move {
+                let result = dynamo
+                    .delete_item()
+                    .table_name(table)
+                    .key("pk", AttributeValue::S("sundae-sync-v2".to_string()))
+                    .condition_expression("attribute_not_exists(pk) OR instance_id = :instance_id")
+                    .expression_attribute_values(":instance_id", AttributeValue::S(instance_id.clone()))
+                    .send()
+                    .await;
+
+                match result {
+                    Ok(_) => info!("Lock {} cleanup successful", instance_id),
+                    Err(e) => info!("Lock {} cleanup failed (will expire via TTL): {:?}", instance_id, e),
+                }
+            });
         }
     }
 }
