@@ -126,3 +126,253 @@ impl FilterConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_token_filter_policy_match() {
+        let policy_id = vec![0x01, 0x02, 0x03];
+        let filter = TokenFilter::Policy { policy: policy_id.clone() };
+
+        let assets = vec![
+            Multiasset {
+                policy_id: policy_id.clone().into(),
+                assets: vec![],
+                redeemer: None,
+            }
+        ];
+
+        assert!(filter.applies(&assets));
+    }
+
+    #[test]
+    fn test_token_filter_policy_no_match() {
+        let filter = TokenFilter::Policy { policy: vec![0x01, 0x02, 0x03] };
+
+        let assets = vec![
+            Multiasset {
+                policy_id: vec![0xff, 0xee, 0xdd].into(),
+                assets: vec![],
+                redeemer: None,
+            }
+        ];
+
+        assert!(!filter.applies(&assets));
+    }
+
+    #[test]
+    fn test_token_filter_asset_id_match() {
+        let policy_id = vec![0x01, 0x02, 0x03];
+        let asset_name = vec![0x04, 0x05];
+        let filter = TokenFilter::AssetId {
+            policy: policy_id.clone(),
+            asset_name: asset_name.clone(),
+        };
+
+        let assets = vec![
+            Multiasset {
+                policy_id: policy_id.clone().into(),
+                assets: vec![
+                    utxorpc::spec::cardano::Asset {
+                        name: asset_name.clone().into(),
+                        output_coin: 100,
+                        mint_coin: 0,
+                    }
+                ],
+                redeemer: None,
+            }
+        ];
+
+        assert!(filter.applies(&assets));
+    }
+
+    #[test]
+    fn test_token_filter_asset_id_wrong_policy() {
+        let filter = TokenFilter::AssetId {
+            policy: vec![0x01, 0x02, 0x03],
+            asset_name: vec![0x04, 0x05],
+        };
+
+        let assets = vec![
+            Multiasset {
+                policy_id: vec![0xff, 0xee, 0xdd].into(),
+                assets: vec![
+                    utxorpc::spec::cardano::Asset {
+                        name: vec![0x04, 0x05].into(),
+                        output_coin: 100,
+                        mint_coin: 0,
+                    }
+                ],
+                redeemer: None,
+            }
+        ];
+
+        assert!(!filter.applies(&assets));
+    }
+
+    #[test]
+    fn test_token_filter_asset_id_wrong_name() {
+        let policy_id = vec![0x01, 0x02, 0x03];
+        let filter = TokenFilter::AssetId {
+            policy: policy_id.clone(),
+            asset_name: vec![0x04, 0x05],
+        };
+
+        let assets = vec![
+            Multiasset {
+                policy_id: policy_id.clone().into(),
+                assets: vec![
+                    utxorpc::spec::cardano::Asset {
+                        name: vec![0xff, 0xee].into(),
+                        output_coin: 100,
+                        mint_coin: 0,
+                    }
+                ],
+                redeemer: None,
+            }
+        ];
+
+        assert!(!filter.applies(&assets));
+    }
+
+    #[test]
+    fn test_token_filter_empty_assets() {
+        let filter = TokenFilter::Policy { policy: vec![0x01, 0x02, 0x03] };
+        assert!(!filter.applies(&[]));
+    }
+
+    #[test]
+    fn test_filter_config_all_match() {
+        let policy1 = vec![0x01, 0x02, 0x03];
+        let policy2 = vec![0x04, 0x05, 0x06];
+
+        let filter = FilterConfig::All(vec![
+            Box::new(FilterConfig::Mint(TokenFilter::Policy { policy: policy1.clone() })),
+            Box::new(FilterConfig::Mint(TokenFilter::Policy { policy: policy2.clone() })),
+        ]);
+
+        let tx = Tx {
+            mint: vec![
+                Multiasset { policy_id: policy1.into(), assets: vec![], redeemer: None },
+                Multiasset { policy_id: policy2.into(), assets: vec![], redeemer: None },
+            ],
+            ..Default::default()
+        };
+
+        assert!(filter.applies(&tx));
+    }
+
+    #[test]
+    fn test_filter_config_all_no_match() {
+        let policy1 = vec![0x01, 0x02, 0x03];
+        let policy2 = vec![0x04, 0x05, 0x06];
+
+        let filter = FilterConfig::All(vec![
+            Box::new(FilterConfig::Mint(TokenFilter::Policy { policy: policy1.clone() })),
+            Box::new(FilterConfig::Mint(TokenFilter::Policy { policy: policy2.clone() })),
+        ]);
+
+        // Only has policy1, missing policy2
+        let tx = Tx {
+            mint: vec![
+                Multiasset { policy_id: policy1.into(), assets: vec![], redeemer: None },
+            ],
+            ..Default::default()
+        };
+
+        assert!(!filter.applies(&tx));
+    }
+
+    #[test]
+    fn test_filter_config_any_match() {
+        let policy1 = vec![0x01, 0x02, 0x03];
+        let policy2 = vec![0x04, 0x05, 0x06];
+
+        let filter = FilterConfig::Any(vec![
+            Box::new(FilterConfig::Mint(TokenFilter::Policy { policy: policy1.clone() })),
+            Box::new(FilterConfig::Mint(TokenFilter::Policy { policy: policy2 })),
+        ]);
+
+        // Only has policy1, but that's enough for Any
+        let tx = Tx {
+            mint: vec![
+                Multiasset { policy_id: policy1.into(), assets: vec![], redeemer: None },
+            ],
+            ..Default::default()
+        };
+
+        assert!(filter.applies(&tx));
+    }
+
+    #[test]
+    fn test_filter_config_any_no_match() {
+        let filter = FilterConfig::Any(vec![
+            Box::new(FilterConfig::Mint(TokenFilter::Policy { policy: vec![0x01, 0x02, 0x03] })),
+            Box::new(FilterConfig::Mint(TokenFilter::Policy { policy: vec![0x04, 0x05, 0x06] })),
+        ]);
+
+        // Has neither policy
+        let tx = Tx {
+            mint: vec![
+                Multiasset { policy_id: vec![0xff, 0xee, 0xdd].into(), assets: vec![], redeemer: None },
+            ],
+            ..Default::default()
+        };
+
+        assert!(!filter.applies(&tx));
+    }
+
+    #[test]
+    fn test_filter_config_mint() {
+        let policy_id = vec![0xaa, 0xbb, 0xcc];
+        let filter = FilterConfig::Mint(TokenFilter::Policy { policy: policy_id.clone() });
+
+        let tx = Tx {
+            mint: vec![
+                Multiasset { policy_id: policy_id.into(), assets: vec![], redeemer: None },
+            ],
+            ..Default::default()
+        };
+
+        assert!(filter.applies(&tx));
+    }
+
+    #[test]
+    fn test_filter_config_withdraw() {
+        let credential = vec![0x11, 0x22, 0x33];
+        let filter = FilterConfig::Withdraw { credential: credential.clone() };
+
+        let tx = Tx {
+            withdrawals: vec![
+                utxorpc::spec::cardano::Withdrawal {
+                    reward_account: credential.into(),
+                    coin: 1000,
+                    redeemer: None,
+                }
+            ],
+            ..Default::default()
+        };
+
+        assert!(filter.applies(&tx));
+    }
+
+    #[test]
+    fn test_filter_config_withdraw_no_match() {
+        let filter = FilterConfig::Withdraw { credential: vec![0x11, 0x22, 0x33] };
+
+        let tx = Tx {
+            withdrawals: vec![
+                utxorpc::spec::cardano::Withdrawal {
+                    reward_account: vec![0xff, 0xee, 0xdd].into(),
+                    coin: 1000,
+                    redeemer: None,
+                }
+            ],
+            ..Default::default()
+        };
+
+        assert!(!filter.applies(&tx));
+    }
+}

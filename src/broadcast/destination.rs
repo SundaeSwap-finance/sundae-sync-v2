@@ -7,7 +7,7 @@ use aws_sdk_kinesis::{types::ShardIteratorType, Client as KinesisClient};
 use bytes::Bytes;
 use hex::ToHex;
 use serde::{ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer};
-use tracing::{info, trace, warn};
+use tracing::{info, warn};
 use utxorpc::spec::sync::BlockRef;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -261,4 +261,95 @@ where
             })
             .collect()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_point_to_string() {
+        let point = BlockRef {
+            index: 12345,
+            hash: bytes::Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]),
+        };
+        let result = point_to_string(&point);
+        assert_eq!(result, "12345/deadbeef");
+    }
+
+    #[test]
+    fn test_string_to_point() {
+        let input = "12345/deadbeef".to_string();
+        let result = string_to_point(input).unwrap();
+        assert_eq!(result.index, 12345);
+        assert_eq!(result.hash, bytes::Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]));
+    }
+
+    #[test]
+    fn test_point_roundtrip() {
+        let original = BlockRef {
+            index: 98765,
+            hash: bytes::Bytes::from(vec![
+                0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+            ]),
+        };
+        let serialized = point_to_string(&original);
+        let deserialized = string_to_point(serialized).unwrap();
+        assert_eq!(original.index, deserialized.index);
+        assert_eq!(original.hash, deserialized.hash);
+    }
+
+    #[test]
+    fn test_string_to_point_invalid_format() {
+        let result = string_to_point("invalid".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_string_to_point_invalid_hex() {
+        let result = string_to_point("12345/notvalidhex".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_string_to_point_invalid_index() {
+        let result = string_to_point("notanumber/deadbeef".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_destination_serde_roundtrip() {
+        let dest = Destination {
+            pk: "test-dest".to_string(),
+            stream_arn: "arn:aws:kinesis:us-east-1:123456789:stream/test".to_string(),
+            shard_id: "shard-0".to_string(),
+            filter: None,
+            sequence_number: Some("12345".to_string()),
+            last_seen_point: BlockRef {
+                index: 100,
+                hash: bytes::Bytes::from(vec![0xaa, 0xbb, 0xcc, 0xdd]),
+            },
+            recovery_points: vec![
+                BlockRef {
+                    index: 90,
+                    hash: bytes::Bytes::from(vec![0x11, 0x22, 0x33, 0x44]),
+                },
+                BlockRef {
+                    index: 95,
+                    hash: bytes::Bytes::from(vec![0x55, 0x66, 0x77, 0x88]),
+                },
+            ],
+            enabled: true,
+            skip_repair: false,
+        };
+
+        let json = serde_json::to_string(&dest).unwrap();
+        let deserialized: Destination = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(dest.pk, deserialized.pk);
+        assert_eq!(dest.last_seen_point.index, deserialized.last_seen_point.index);
+        assert_eq!(dest.last_seen_point.hash, deserialized.last_seen_point.hash);
+        assert_eq!(dest.recovery_points.len(), deserialized.recovery_points.len());
+        assert_eq!(dest.recovery_points[0].index, deserialized.recovery_points[0].index);
+    }
 }
