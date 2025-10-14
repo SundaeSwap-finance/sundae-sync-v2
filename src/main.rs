@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
     {
         // Spawn a thread that runs our worker thread *only* when we have a lock thread
         let lock_thread = LockThread {
-            lock_duration: Duration::from_secs(300),  // 5 minutes - worker deadline
+            lock_duration: Duration::from_secs(300), // 5 minutes - worker deadline
             lock_acquire_freq: Duration::from_secs(30),
             lock_renew_freq: Duration::from_secs(60),
             lock_stall_window: Duration::from_secs(30),

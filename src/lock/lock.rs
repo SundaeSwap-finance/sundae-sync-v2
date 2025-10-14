@@ -166,7 +166,10 @@ impl Drop for Lock {
             let table = self.table.clone();
             let instance_id = self.record.instance_id.clone();
 
-            info!("Lock {} dropped without explicit release, attempting cleanup", instance_id);
+            info!(
+                "Lock {} dropped without explicit release, attempting cleanup",
+                instance_id
+            );
 
             tokio::spawn(async move {
                 let result = dynamo
@@ -174,13 +177,19 @@ impl Drop for Lock {
                     .table_name(table)
                     .key("pk", AttributeValue::S("sundae-sync-v2".to_string()))
                     .condition_expression("attribute_not_exists(pk) OR instance_id = :instance_id")
-                    .expression_attribute_values(":instance_id", AttributeValue::S(instance_id.clone()))
+                    .expression_attribute_values(
+                        ":instance_id",
+                        AttributeValue::S(instance_id.clone()),
+                    )
                     .send()
                     .await;
 
                 match result {
                     Ok(_) => info!("Lock {} cleanup successful", instance_id),
-                    Err(e) => info!("Lock {} cleanup failed (will expire via TTL): {:?}", instance_id, e),
+                    Err(e) => info!(
+                        "Lock {} cleanup failed (will expire via TTL): {:?}",
+                        instance_id, e
+                    ),
                 }
             });
         }

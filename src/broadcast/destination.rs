@@ -170,7 +170,10 @@ impl Destination {
                 let point = message.advance;
 
                 // Try to commit with conditional check - this prevents zombie worker races
-                match self.commit(&dynamo, &table, point.clone(), Some(seq_no)).await {
+                match self
+                    .commit(&dynamo, &table, point.clone(), Some(seq_no))
+                    .await
+                {
                     Ok(_) => {
                         info!("Repaired destination {} to point {}", self.pk, point.index);
                     }
@@ -192,7 +195,10 @@ impl Destination {
             }
 
             if millis_behind_latest == 0 {
-                info!("Repair complete for destination {}, caught up to tip", self.pk);
+                info!(
+                    "Repair complete for destination {}, caught up to tip",
+                    self.pk
+                );
                 break;
             }
 
@@ -282,16 +288,17 @@ mod tests {
         let input = "12345/deadbeef".to_string();
         let result = string_to_point(input).unwrap();
         assert_eq!(result.index, 12345);
-        assert_eq!(result.hash, bytes::Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]));
+        assert_eq!(
+            result.hash,
+            bytes::Bytes::from(vec![0xde, 0xad, 0xbe, 0xef])
+        );
     }
 
     #[test]
     fn test_point_roundtrip() {
         let original = BlockRef {
             index: 98765,
-            hash: bytes::Bytes::from(vec![
-                0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
-            ]),
+            hash: bytes::Bytes::from(vec![0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]),
         };
         let serialized = point_to_string(&original);
         let deserialized = string_to_point(serialized).unwrap();
@@ -347,9 +354,18 @@ mod tests {
         let deserialized: Destination = serde_json::from_str(&json).unwrap();
 
         assert_eq!(dest.pk, deserialized.pk);
-        assert_eq!(dest.last_seen_point.index, deserialized.last_seen_point.index);
+        assert_eq!(
+            dest.last_seen_point.index,
+            deserialized.last_seen_point.index
+        );
         assert_eq!(dest.last_seen_point.hash, deserialized.last_seen_point.hash);
-        assert_eq!(dest.recovery_points.len(), deserialized.recovery_points.len());
-        assert_eq!(dest.recovery_points[0].index, deserialized.recovery_points[0].index);
+        assert_eq!(
+            dest.recovery_points.len(),
+            deserialized.recovery_points.len()
+        );
+        assert_eq!(
+            dest.recovery_points[0].index,
+            deserialized.recovery_points[0].index
+        );
     }
 }
