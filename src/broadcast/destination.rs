@@ -46,6 +46,7 @@ impl Destination {
         // rather than just using the most recent 15
         let previous_point = self.last_seen_point.clone();
         self.last_seen_point = point.clone();
+        self.sequence_number = seq_num.clone();
         self.recovery_points.push(point.clone());
         if self.recovery_points.len() > 15 {
             self.recovery_points.remove(0);

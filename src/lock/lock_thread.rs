@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::Worker;
+use crate::worker::Worker;
 
 use super::lock::Lock;
 use anyhow::Result;
