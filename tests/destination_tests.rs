@@ -1,58 +1,12 @@
+mod common;
+
 use anyhow::Result;
-use aws_config::BehaviorVersion;
-use aws_sdk_dynamodb::{
-    types::{
-        AttributeDefinition, AttributeValue, BillingMode, KeySchemaElement, KeyType,
-        ScalarAttributeType,
-    },
-    Client as DynamoClient,
-};
+use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoClient};
 use bytes::Bytes;
 use serde_dynamo::to_item;
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::dynamodb_local::DynamoDb;
 use utxorpc::spec::sync::BlockRef;
 
 use sundae_sync_v2::broadcast::destination::Destination;
-
-/// Helper to set up DynamoDB Local for destination tests
-async fn setup_dynamodb() -> Result<(testcontainers::ContainerAsync<DynamoDb>, DynamoClient, String)> {
-    let container = DynamoDb::default().start().await?;
-
-    let port = container.get_host_port_ipv4(8000).await?;
-    let endpoint = format!("http://127.0.0.1:{}", port);
-
-    let config = aws_config::defaults(BehaviorVersion::latest())
-        .endpoint_url(&endpoint)
-        .region("us-east-1")
-        .load()
-        .await;
-
-    let client = DynamoClient::new(&config);
-    let table_name = format!("dest-table-{}", uuid::Uuid::new_v4());
-
-    // Create destinations table
-    client
-        .create_table()
-        .table_name(&table_name)
-        .billing_mode(BillingMode::PayPerRequest)
-        .attribute_definitions(
-            AttributeDefinition::builder()
-                .attribute_name("pk")
-                .attribute_type(ScalarAttributeType::S)
-                .build()?,
-        )
-        .key_schema(
-            KeySchemaElement::builder()
-                .attribute_name("pk")
-                .key_type(KeyType::Hash)
-                .build()?,
-        )
-        .send()
-        .await?;
-
-    Ok((container, client, table_name))
-}
 
 /// Helper to create a test destination and insert it into DynamoDB
 async fn create_test_destination(
@@ -93,7 +47,7 @@ fn make_point(index: u64) -> BlockRef {
 
 #[tokio::test]
 async fn test_destination_commit_succeeds_on_correct_sequence() -> Result<()> {
-    let (_container, dynamo, table) = setup_dynamodb().await?;
+    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
 
@@ -110,7 +64,7 @@ async fn test_destination_commit_succeeds_on_correct_sequence() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_commit_prevents_split_brain() -> Result<()> {
-    let (_container, dynamo, table) = setup_dynamodb().await?;
+    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest1 = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
     let mut dest2 = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
@@ -154,7 +108,7 @@ async fn test_destination_commit_prevents_split_brain() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_commit_detects_zombie_worker() -> Result<()> {
-    let (_container, dynamo, table) = setup_dynamodb().await?;
+    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
 
     // Current worker at point 100
     let mut current_worker = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
@@ -201,7 +155,7 @@ async fn test_destination_commit_detects_zombie_worker() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_recovery_points_rotation() -> Result<()> {
-    let (_container, dynamo, table) = setup_dynamodb().await?;
+    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
 
@@ -230,7 +184,7 @@ async fn test_destination_recovery_points_rotation() -> Result<()> {
 
 #[tokio::test]
 async fn test_concurrent_destination_commits() -> Result<()> {
-    let (_container, dynamo, table) = setup_dynamodb().await?;
+    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
 
     let _initial = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
 
@@ -301,7 +255,7 @@ async fn test_concurrent_destination_commits() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_commit_updates_sequence_number() -> Result<()> {
-    let (_container, dynamo, table) = setup_dynamodb().await?;
+    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
 
@@ -321,7 +275,7 @@ async fn test_destination_commit_updates_sequence_number() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_commit_adds_to_recovery_points() -> Result<()> {
-    let (_container, dynamo, table) = setup_dynamodb().await?;
+    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
 

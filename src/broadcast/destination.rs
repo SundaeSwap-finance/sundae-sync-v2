@@ -1,7 +1,7 @@
 use crate::broadcast::BroadcastMessage;
 
 use super::filter::FilterConfig;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoClient};
 use aws_sdk_kinesis::{types::ShardIteratorType, Client as KinesisClient};
 use bytes::Bytes;
@@ -240,6 +240,9 @@ where
 
 pub fn string_to_point(s: String) -> Result<BlockRef> {
     let parts: Vec<_> = s.split('/').collect();
+    if parts.len() != 2 {
+      bail!("invalid point: multiple slashes!");
+    }
     let index = parts[0].parse()?;
     let hash = Bytes::from_iter(hex::decode(parts[1])?);
     Ok(BlockRef { index, hash })
@@ -368,5 +371,88 @@ mod tests {
             dest.recovery_points[0].index,
             deserialized.recovery_points[0].index
         );
+    }
+
+    // Edge case tests for point serialization
+
+    #[test]
+    fn test_point_serialization_with_empty_hash() {
+        let point = BlockRef {
+            index: 0,
+            hash: bytes::Bytes::from(vec![]),
+        };
+        let serialized = point_to_string(&point);
+        assert_eq!(serialized, "0/");
+        let deserialized = string_to_point(serialized).unwrap();
+        assert_eq!(deserialized.index, 0);
+        assert_eq!(deserialized.hash, bytes::Bytes::from(vec![]));
+    }
+
+    #[test]
+    fn test_point_serialization_with_large_index() {
+        let point = BlockRef {
+            index: u64::MAX,
+            hash: bytes::Bytes::from(vec![0xff, 0xff]),
+        };
+        let serialized = point_to_string(&point);
+        assert_eq!(serialized, "18446744073709551615/ffff");
+        let deserialized = string_to_point(serialized).unwrap();
+        assert_eq!(deserialized.index, u64::MAX);
+    }
+
+    #[test]
+    fn test_string_to_point_with_multiple_slashes() {
+        // The current implementation will fail on this - it assumes exactly one slash
+        let result = string_to_point("12345/dead/beef".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_string_to_point_with_no_slash() {
+        let result = string_to_point("12345deadbeef".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_string_to_point_with_empty_string() {
+        let result = string_to_point("".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_point_serialization_with_long_hash() {
+        // Test with a 32-byte hash (typical block hash size)
+        let hash = vec![
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+            0xcc, 0xdd, 0xee, 0xff,
+        ];
+        let point = BlockRef {
+            index: 42,
+            hash: bytes::Bytes::from(hash.clone()),
+        };
+        let serialized = point_to_string(&point);
+        let deserialized = string_to_point(serialized).unwrap();
+        assert_eq!(deserialized.index, 42);
+        assert_eq!(deserialized.hash, bytes::Bytes::from(hash));
+    }
+
+    #[test]
+    fn test_string_to_point_with_odd_length_hex() {
+        // Hex strings with odd length should fail (can't decode to bytes)
+        let result = string_to_point("12345/abc".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_point_to_string_lowercase_hex() {
+        // Verify that hex encoding produces lowercase
+        let point = BlockRef {
+            index: 1,
+            hash: bytes::Bytes::from(vec![0xAB, 0xCD, 0xEF]),
+        };
+        let result = point_to_string(&point);
+        assert_eq!(result, "1/abcdef");
+        assert!(!result.contains("AB"));
     }
 }
