@@ -241,7 +241,7 @@ where
 pub fn string_to_point(s: String) -> Result<BlockRef> {
     let parts: Vec<_> = s.split('/').collect();
     if parts.len() != 2 {
-      bail!("invalid point: multiple slashes!");
+        bail!("invalid point: multiple slashes!");
     }
     let index = parts[0].parse()?;
     let hash = Bytes::from_iter(hex::decode(parts[1])?);

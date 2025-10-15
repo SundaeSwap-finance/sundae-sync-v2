@@ -47,13 +47,19 @@ fn make_point(index: u64) -> BlockRef {
 
 #[tokio::test]
 async fn test_destination_commit_succeeds_on_correct_sequence() -> Result<()> {
-    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
+    let (_container, dynamo, table) =
+        common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
 
     // Commit the next point in sequence
-    dest.commit(&dynamo, &table, make_point(101), Some("seq-101".to_string()))
-        .await?;
+    dest.commit(
+        &dynamo,
+        &table,
+        make_point(101),
+        Some("seq-101".to_string()),
+    )
+    .await?;
 
     // Verify it updated
     assert_eq!(dest.last_seen_point.index, 101);
@@ -64,19 +70,30 @@ async fn test_destination_commit_succeeds_on_correct_sequence() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_commit_prevents_split_brain() -> Result<()> {
-    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
+    let (_container, dynamo, table) =
+        common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest1 = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
     let mut dest2 = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
 
     // Worker 1 commits point 101
     let result1 = dest1
-        .commit(&dynamo, &table, make_point(101), Some("seq-101".to_string()))
+        .commit(
+            &dynamo,
+            &table,
+            make_point(101),
+            Some("seq-101".to_string()),
+        )
         .await;
 
     // Worker 2 tries to commit point 102 (different point, starting from same base)
     let result2 = dest2
-        .commit(&dynamo, &table, make_point(102), Some("seq-102".to_string()))
+        .commit(
+            &dynamo,
+            &table,
+            make_point(102),
+            Some("seq-102".to_string()),
+        )
         .await;
 
     // Exactly one should succeed
@@ -90,14 +107,16 @@ async fn test_destination_commit_prevents_split_brain() -> Result<()> {
     // The failed one should have the helpful error message
     if let Err(e) = result1.as_ref() {
         assert!(
-            e.to_string().contains("Another worker has updated destination"),
+            e.to_string()
+                .contains("Another worker has updated destination"),
             "Error should mention failover: {}",
             e
         );
     }
     if let Err(e) = result2.as_ref() {
         assert!(
-            e.to_string().contains("Another worker has updated destination"),
+            e.to_string()
+                .contains("Another worker has updated destination"),
             "Error should mention failover: {}",
             e
         );
@@ -108,14 +127,21 @@ async fn test_destination_commit_prevents_split_brain() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_commit_detects_zombie_worker() -> Result<()> {
-    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
+    let (_container, dynamo, table) =
+        common::setup_dynamodb(common::TableType::Destination).await?;
 
     // Current worker at point 100
-    let mut current_worker = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
+    let mut current_worker =
+        create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
 
     // Current worker advances to 101
     current_worker
-        .commit(&dynamo, &table, make_point(101), Some("seq-101".to_string()))
+        .commit(
+            &dynamo,
+            &table,
+            make_point(101),
+            Some("seq-101".to_string()),
+        )
         .await?;
 
     // Zombie worker still thinks we're at 100, tries to commit 101
@@ -132,7 +158,12 @@ async fn test_destination_commit_detects_zombie_worker() -> Result<()> {
     };
 
     let result = zombie_worker
-        .commit(&dynamo, &table, make_point(101), Some("seq-zombie".to_string()))
+        .commit(
+            &dynamo,
+            &table,
+            make_point(101),
+            Some("seq-zombie".to_string()),
+        )
         .await;
 
     // Should fail with conditional check
@@ -155,7 +186,8 @@ async fn test_destination_commit_detects_zombie_worker() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_recovery_points_rotation() -> Result<()> {
-    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
+    let (_container, dynamo, table) =
+        common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
 
@@ -184,7 +216,8 @@ async fn test_destination_recovery_points_rotation() -> Result<()> {
 
 #[tokio::test]
 async fn test_concurrent_destination_commits() -> Result<()> {
-    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
+    let (_container, dynamo, table) =
+        common::setup_dynamodb(common::TableType::Destination).await?;
 
     let _initial = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
 
@@ -223,7 +256,10 @@ async fn test_concurrent_destination_commits() -> Result<()> {
         .collect();
 
     // Exactly one should succeed (the first one to write)
-    let successful_count = results.iter().filter(|r: &&Option<u64>| r.is_some()).count();
+    let successful_count = results
+        .iter()
+        .filter(|r: &&Option<u64>| r.is_some())
+        .count();
 
     assert_eq!(
         successful_count, 1,
@@ -245,7 +281,11 @@ async fn test_concurrent_destination_commits() -> Result<()> {
     // Should be one of 101-110, not 100
     if let AttributeValue::S(point_str) = last_point {
         let index: u64 = point_str.split('/').next().unwrap().parse()?;
-        assert!(index >= 101 && index <= 110, "Final point should be 101-110, got {}", index);
+        assert!(
+            index >= 101 && index <= 110,
+            "Final point should be 101-110, got {}",
+            index
+        );
     } else {
         panic!("last_seen_point should be a string");
     }
@@ -255,13 +295,19 @@ async fn test_concurrent_destination_commits() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_commit_updates_sequence_number() -> Result<()> {
-    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
+    let (_container, dynamo, table) =
+        common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
 
     // Commit with new sequence number
-    dest.commit(&dynamo, &table, make_point(101), Some("new-seq-101".to_string()))
-        .await?;
+    dest.commit(
+        &dynamo,
+        &table,
+        make_point(101),
+        Some("new-seq-101".to_string()),
+    )
+    .await?;
 
     assert_eq!(dest.sequence_number, Some("new-seq-101".to_string()));
 
@@ -275,15 +321,21 @@ async fn test_destination_commit_updates_sequence_number() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_commit_adds_to_recovery_points() -> Result<()> {
-    let (_container, dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
+    let (_container, dynamo, table) =
+        common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
 
     let initial_recovery_count = dest.recovery_points.len();
 
     // Commit a new point
-    dest.commit(&dynamo, &table, make_point(101), Some("seq-101".to_string()))
-        .await?;
+    dest.commit(
+        &dynamo,
+        &table,
+        make_point(101),
+        Some("seq-101".to_string()),
+    )
+    .await?;
 
     // Recovery points should have grown by 1
     assert_eq!(dest.recovery_points.len(), initial_recovery_count + 1);

@@ -18,7 +18,9 @@ pub enum TableType {
 
 /// Sets up a DynamoDB Local container for testing
 /// Returns (container, client, table_name)
-pub async fn setup_dynamodb(table_type: TableType) -> Result<(ContainerAsync<DynamoDb>, DynamoClient, String)> {
+pub async fn setup_dynamodb(
+    table_type: TableType,
+) -> Result<(ContainerAsync<DynamoDb>, DynamoClient, String)> {
     let container = DynamoDb::default().start().await?;
     let port = container.get_host_port_ipv4(8000).await?;
     let endpoint = format!("http://127.0.0.1:{}", port);
