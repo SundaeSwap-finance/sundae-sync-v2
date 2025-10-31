@@ -17,6 +17,8 @@ Mappings:
           SubnetId: subnet-08fe76b5c6dc035d0
         - AvailabilityZone: us-east-2b
           SubnetId: subnet-0797a471ba5029682
+      Subnet1: 'subnet-08fe76b5c6dc035d0'
+      Subnet2: 'subnet-0797a471ba5029682'
     cardano-tom:
       Image: 'ami-07feb56dadb897a30'
       Snapshot: 'snap-047e50379c2d1fce9'
@@ -202,21 +204,32 @@ Resources:
                     - Key: sundae-labs:cost-allocation:Service
                       Value: sundae-sync-v2
 
-    SundaeSyncInstances:
-        Type: 'AWS::EC2::EC2Fleet'
-        Properties:
-            ExcessCapacityTerminationPolicy: 'termination'
-            TagSpecifications:
-                - ResourceType: 'instance'
-                  Tags:
-                    - Key: sundae-labs:cost-allocation:Service
-                      Value: sundae-sync-v2
-            TargetCapacitySpecification:
-                TotalTargetCapacity: 2
-                OnDemandTargetCapacity: 1
-                DefaultTargetCapacityType: 'spot'
-            LaunchTemplateConfigs:
-                - LaunchTemplateSpecification:
-                    LaunchTemplateId: !Ref SundaeSyncLaunchTemplate
-                    Version: $Latest
-                  Overrides: !FindInMap [Env, !Ref Env, Subnets]
+    SundaeSyncInstance1:
+      Type: AWS::EC2::Instance
+      Properties:
+        LaunchTemplate:
+          LaunchTemplateId: !Ref SundaeSyncLaunchTemplate
+          Version: $Latest
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            SubnetId: !FindInMap [Env, !Ref Env, Subnet1]
+        Tags:
+          - Key: Name
+            Value: !Sub "${Env}-sundae-sync-1"
+          - Key: sundae-labs:cost-allocation:Service
+            Value: sundae-sync-v2
+
+    SundaeSyncInstance2:
+      Type: AWS::EC2::Instance
+      Properties:
+        LaunchTemplate:
+          LaunchTemplateId: !Ref SundaeSyncLaunchTemplate
+          Version: $Latest
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            SubnetId: !FindInMap [Env, !Ref Env, Subnet1]
+        Tags:
+          - Key: Name
+            Value: !Sub "${Env}-sundae-sync-2"
+          - Key: sundae-labs:cost-allocation:Service
+            Value: sundae-sync-v2
