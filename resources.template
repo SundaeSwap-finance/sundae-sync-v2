@@ -22,9 +22,9 @@ Mappings:
       Snapshot: 'snap-01b2cb5ae70f0b0da'
       Subnets:
         - AvailabilityZone: us-east-2a
-          SubnetId: subnet-00b61ede02fae91f3
+          SubnetId: subnet-070f64d97d8066057
         - AvailabilityZone: us-east-2b
-          SubnetId: subnet-0556e5d304dc5e443
+          SubnetId: subnet-08bee38ae76972f14
     cardano-tom:
       Image: 'ami-07feb56dadb897a30'
       Snapshot: 'snap-047e50379c2d1fce9'
