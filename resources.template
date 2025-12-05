@@ -19,6 +19,7 @@ Mappings:
           SubnetId: subnet-0797a471ba5029682
     mainnet:
       Image: 'ami-0e950d515ccaecdc3'
+      Snapshot: 'snap-01b2cb5ae70f0b0da'
       Subnets:
         - AvailabilityZone: us-east-2a
           SubnetId: subnet-00b61ede02fae91f3
