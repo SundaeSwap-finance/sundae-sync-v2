@@ -118,6 +118,7 @@ async fn main() -> Result<()> {
 
     let sync_from = decode_point(&args.sync_from)?;
     let sync_to = decode_point(&args.sync_to)?;
+    info!("Syncing from {sync_from:?} to {sync_to:?}");
     client.find_intersect(sync_from.clone()).await?;
     let mut point = sync_from;
     restore_history(&mut client, archive, sync_to, &mut point)
@@ -140,7 +141,11 @@ async fn restore_history(
             bail!("Block without a header")
         };
         let point = Point::Specific(header.slot, header.hash.to_vec());
+        let height = header.height;
         archive.save(&block, raw_block).await?;
+        if height.is_multiple_of(1000) {
+            info!("Restored up to {point:?}");
+        }
         *synced_to = point;
         if synced_to == &target {
             return Ok(());
