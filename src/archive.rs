@@ -87,7 +87,7 @@ fn block_hash_key(hash: impl ToHex) -> String {
 }
 
 #[derive(Clone)]
-struct NoContext;
+pub struct NoContext;
 impl LedgerContext for NoContext {
     fn get_utxos(
         &self,

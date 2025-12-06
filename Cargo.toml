@@ -6,6 +6,7 @@ edition = "2021"
 repository = "https://github.com/SundaeSwap-finance/sundae-sync-v2"
 license-file = "LICENSE"
 publish = false
+default-run = "sundae-sync-v2"
 
 [dependencies]
 pallas = "0.32"
