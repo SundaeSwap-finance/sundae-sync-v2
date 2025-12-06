@@ -110,7 +110,9 @@ impl Client {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
     let args = Args::parse();
+    info!("Starting sundae-sync-v2 restore history");
 
     let archive = construct_archive(&args).await?;
 
@@ -118,7 +120,7 @@ async fn main() -> Result<()> {
 
     let sync_from = decode_point(&args.sync_from)?;
     let sync_to = decode_point(&args.sync_to)?;
-    info!("Syncing from {sync_from:?} to {sync_to:?}");
+    info!("Restoring from {sync_from:?} to {sync_to:?}");
     client.find_intersect(sync_from.clone()).await?;
     let mut point = sync_from;
     restore_history(&mut client, archive, sync_to, &mut point)
@@ -143,7 +145,7 @@ async fn restore_history(
         let point = Point::Specific(header.slot, header.hash.to_vec());
         let height = header.height;
         archive.save(&block, raw_block).await?;
-        if height.is_multiple_of(1000) {
+        if height.is_multiple_of(100) {
             info!("Restored up to {point:?}");
         }
         *synced_to = point;
