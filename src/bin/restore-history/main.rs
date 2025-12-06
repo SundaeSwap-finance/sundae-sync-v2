@@ -51,8 +51,14 @@ async fn restore_history(
     let mapper = Mapper::new(NoContext);
     loop {
         match cs.request_or_await_next().await? {
-            NextResponse::RollBackward(_, _) => bail!("unexpected rollback"),
             NextResponse::Await => continue,
+            NextResponse::RollBackward(roll_back_to, _) => {
+                if synced_to == &roll_back_to {
+                    continue;
+                } else {
+                    bail!("unexpected rollback");
+                }
+            }
             NextResponse::RollForward(content, _) => {
                 let block = mapper.map_block_cbor(&content.0);
                 let Some(header) = block.header.as_ref() else {
