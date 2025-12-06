@@ -9,7 +9,7 @@ publish = false
 default-run = "sundae-sync-v2"
 
 [dependencies]
-pallas = "0.32"
+pallas = "0.33"
 
 tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "signal"] }
 anyhow = "1.0"
@@ -28,15 +28,15 @@ uuid = { version = "1.10.0", features = ["v4", "fast-rng"] }
 serde_dynamo = { version = "4.2.14", features = ["aws-sdk-dynamodb+1"] }
 ctrlc = "3.4.4"
 tokio-util = "0.7.11"
-bytes = "1.6.1"
-prost = { version = "0.12.6", features = ["no-recursion-limit"] }
+bytes = "1.11"
+prost = { version = "0.14", features = ["no-recursion-limit"] }
 futures = "0.3.30"
 serde_bytes = "0.11.15"
 serde_bytes_base64 = "0.1.1"
 
 [dev-dependencies]
-testcontainers = "0.25.0"
-testcontainers-modules = { version = "0.13.0", features = ["dynamodb"] }
+testcontainers = "0.26.0"
+testcontainers-modules = { version = "0.14.0", features = ["dynamodb"] }
 
 # The profile that 'cargo dist' will build with
 [profile.dist]
