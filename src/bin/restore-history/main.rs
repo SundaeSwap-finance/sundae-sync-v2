@@ -4,11 +4,13 @@ use aws_sdk_dynamodb::Client as DynamoClient;
 use aws_sdk_s3::Client as S3Client;
 use clap::Parser;
 use pallas::{
+    codec::Fragment,
     interop::utxorpc::Mapper,
+    ledger::traverse::MultiEraHeader,
     network::{
-        facades::NodeClient,
+        facades::{NodeClient, PeerClient},
         miniprotocols::{
-            chainsync::{self, NextResponse},
+            chainsync::{self, Message, NextResponse},
             Point,
         },
     },
@@ -20,57 +22,128 @@ use crate::args::Args;
 
 mod args;
 
+enum ClientImpl {
+    Local(NodeClient),
+    Remote(PeerClient),
+}
+
+struct Client {
+    inner: ClientImpl,
+    synced_from: Point,
+}
+
+impl Client {
+    async fn connect(args: &Args) -> Result<Self> {
+        let magic = args.network_magic.unwrap_or(764824073);
+        let inner = if let Some(path) = args.socket_path.as_ref() {
+            let client = NodeClient::connect(path, magic).await?;
+            ClientImpl::Local(client)
+        } else if let Some(address) = args.peer_address.as_ref() {
+            let client = PeerClient::connect(address, magic).await?;
+            ClientImpl::Remote(client)
+        } else {
+            bail!("must provide --socket-path or --peer-address")
+        };
+        Ok(Self {
+            inner,
+            synced_from: Point::Origin,
+        })
+    }
+
+    async fn find_intersect(&mut self, point: Point) -> Result<()> {
+        async fn find_intersect<D>(client: &mut chainsync::Client<D>, point: Point) -> Result<()>
+        where
+            Message<D>: Fragment,
+        {
+            let (Some(p), _) = client.find_intersect(vec![point.clone()]).await? else {
+                bail!("intersect not found");
+            };
+            if p != point {
+                bail!("unexpected intersect {p:?}");
+            } else {
+                Ok(())
+            }
+        }
+        self.synced_from = point.clone();
+        match &mut self.inner {
+            ClientImpl::Local(client) => find_intersect(client.chainsync(), point).await,
+            ClientImpl::Remote(client) => find_intersect(client.chainsync(), point).await,
+        }
+    }
+
+    async fn next_block(&mut self) -> Result<Vec<u8>> {
+        async fn next_block<D>(client: &mut chainsync::Client<D>, synced_from: &Point) -> Result<D>
+        where
+            Message<D>: Fragment,
+        {
+            loop {
+                match client.request_or_await_next().await? {
+                    NextResponse::Await => continue,
+                    NextResponse::RollBackward(roll_back_to, _) => {
+                        if synced_from == &roll_back_to {
+                            continue;
+                        } else {
+                            bail!("unexpected rollback");
+                        }
+                    }
+                    NextResponse::RollForward(d, _) => return Ok(d),
+                }
+            }
+        }
+        match &mut self.inner {
+            ClientImpl::Local(client) => {
+                let block = next_block(client.chainsync(), &self.synced_from).await?;
+                Ok(block.0)
+            }
+            ClientImpl::Remote(client) => {
+                let header = next_block(client.chainsync(), &self.synced_from).await?;
+                let hdr_tag = header.byron_prefix.map(|p| p.0);
+                let hdr_variant = header.variant;
+                let hdr = MultiEraHeader::decode(hdr_variant, hdr_tag, &header.cbor)?;
+                let point = Point::Specific(hdr.slot(), hdr.hash().to_vec());
+                let block = client.blockfetch().fetch_single(point).await?;
+                Ok(block)
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
     let archive = construct_archive(&args).await?;
 
-    let magic = args.network_magic.unwrap_or(764824073);
-    let mut client = NodeClient::connect(args.socket_path, magic).await?;
-    let cs = client.chainsync();
+    let mut client = Client::connect(&args).await?;
 
     let sync_from = decode_point(&args.sync_from)?;
     let sync_to = decode_point(&args.sync_to)?;
-    let (Some(_), _) = cs.find_intersect(vec![sync_from.clone()]).await? else {
-        bail!("sync_from not found")
-    };
+    client.find_intersect(sync_from.clone()).await?;
     let mut point = sync_from;
-    restore_history(cs, archive, sync_to, &mut point)
+    restore_history(&mut client, archive, sync_to, &mut point)
         .await
         .inspect(|()| info!("Successfully restored to {point:?}"))
         .with_context(|| format!("Failed to restore past {point:?}"))
 }
 
 async fn restore_history(
-    cs: &mut chainsync::N2CClient,
+    client: &mut Client,
     archive: Archive,
     target: Point,
     synced_to: &mut Point,
 ) -> Result<()> {
     let mapper = Mapper::new(NoContext);
     loop {
-        match cs.request_or_await_next().await? {
-            NextResponse::Await => continue,
-            NextResponse::RollBackward(roll_back_to, _) => {
-                if synced_to == &roll_back_to {
-                    continue;
-                } else {
-                    bail!("unexpected rollback");
-                }
-            }
-            NextResponse::RollForward(content, _) => {
-                let block = mapper.map_block_cbor(&content.0);
-                let Some(header) = block.header.as_ref() else {
-                    bail!("Block without a header")
-                };
-                let point = Point::Specific(header.slot, header.hash.to_vec());
-                archive.save(&block, content.0).await?;
-                *synced_to = point;
-                if synced_to == &target {
-                    return Ok(());
-                }
-            }
+        let raw_block = client.next_block().await?;
+        let block = mapper.map_block_cbor(&raw_block);
+        let Some(header) = block.header.as_ref() else {
+            bail!("Block without a header")
+        };
+        let point = Point::Specific(header.slot, header.hash.to_vec());
+        archive.save(&block, raw_block).await?;
+        *synced_to = point;
+        if synced_to == &target {
+            return Ok(());
         }
     }
 }
