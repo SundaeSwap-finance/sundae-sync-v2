@@ -169,55 +169,55 @@ Resources:
             Roles:
               - !Ref KinesisRole
 
-    SundaeSyncLaunchTemplateV2:
-        Type: AWS::EC2::LaunchTemplate
-        Properties:
-            LaunchTemplateName: !Sub "${Env}-sundae-sync-v2-launch-template-v2"
-            LaunchTemplateData:
-                BlockDeviceMappings:
-                    - DeviceName: "/dev/xvda"
-                      Ebs:
-                          DeleteOnTermination: true
-                          Iops: 3000
-                          SnapshotId: !FindInMap [Env, !Ref Env, Snapshot]
-                          Throughput: 125
-                          VolumeSize: 512
-                          VolumeType: "gp3"
-                IamInstanceProfile:
-                    Name: !Ref KinesisRoleInstanceProfile
-                ImageId: !FindInMap [Env, !Ref Env, Image]
-                InstanceType: t2.medium
-                KeyName: pi
-                PrivateDnsNameOptions:
-                    HostnameType: resource-name
-            TagSpecifications:
-                - ResourceType: "launch-template"
-                  Tags:
-                    - Key: sundae-labs:cost-allocation:Service
-                      Value: sundae-sync-v2
-
-    SundaeSyncInstance2A:
-        Type: 'AWS::EC2::Instance'
-        Properties:
-            LaunchTemplate:
-                LaunchTemplateId: !Ref SundaeSyncLaunchTemplateV2
-                Version: !GetAtt SundaeSyncLaunchTemplateV2.LatestVersionNumber
-            SubnetId: !FindInMap [Env, !Ref Env, SubnetA]
-            Tags:
-                - Key: sundae-labs:cost-allocation:Service
-                  Value: sundae-sync-v2
-                - Key: Name
-                  Value: !Sub '${Env}-sundae-sync-v2-2a'
-
-    SundaeSyncInstance2B:
-        Type: 'AWS::EC2::Instance'
-        Properties:
-            LaunchTemplate:
-                LaunchTemplateId: !Ref SundaeSyncLaunchTemplateV2
-                Version: !GetAtt SundaeSyncLaunchTemplateV2.LatestVersionNumber
-            SubnetId: !FindInMap [Env, !Ref Env, SubnetB]
-            Tags:
-                - Key: sundae-labs:cost-allocation:Service
-                  Value: sundae-sync-v2
-                - Key: Name
-                  Value: !Sub '${Env}-sundae-sync-v2-2b'
+#    SundaeSyncLaunchTemplateV2:
+#        Type: AWS::EC2::LaunchTemplate
+#        Properties:
+#            LaunchTemplateName: !Sub "${Env}-sundae-sync-v2-launch-template-v2"
+#            LaunchTemplateData:
+#                BlockDeviceMappings:
+#                    - DeviceName: "/dev/xvda"
+#                      Ebs:
+#                          DeleteOnTermination: true
+#                          Iops: 3000
+#                          SnapshotId: !FindInMap [Env, !Ref Env, Snapshot]
+#                          Throughput: 125
+#                          VolumeSize: 512
+#                          VolumeType: "gp3"
+#                IamInstanceProfile:
+#                    Name: !Ref KinesisRoleInstanceProfile
+#                ImageId: !FindInMap [Env, !Ref Env, Image]
+#                InstanceType: t2.medium
+#                KeyName: pi
+#                PrivateDnsNameOptions:
+#                    HostnameType: resource-name
+#            TagSpecifications:
+#                - ResourceType: "launch-template"
+#                  Tags:
+#                    - Key: sundae-labs:cost-allocation:Service
+#                      Value: sundae-sync-v2
+#
+#    SundaeSyncInstance2A:
+#        Type: 'AWS::EC2::Instance'
+#        Properties:
+#            LaunchTemplate:
+#                LaunchTemplateId: !Ref SundaeSyncLaunchTemplateV2
+#                Version: !GetAtt SundaeSyncLaunchTemplateV2.LatestVersionNumber
+#            SubnetId: !FindInMap [Env, !Ref Env, SubnetA]
+#            Tags:
+#                - Key: sundae-labs:cost-allocation:Service
+#                  Value: sundae-sync-v2
+#                - Key: Name
+#                  Value: !Sub '${Env}-sundae-sync-v2-2a'
+#
+#    SundaeSyncInstance2B:
+#        Type: 'AWS::EC2::Instance'
+#        Properties:
+#            LaunchTemplate:
+#                LaunchTemplateId: !Ref SundaeSyncLaunchTemplateV2
+#                Version: !GetAtt SundaeSyncLaunchTemplateV2.LatestVersionNumber
+#            SubnetId: !FindInMap [Env, !Ref Env, SubnetB]
+#            Tags:
+#                - Key: sundae-labs:cost-allocation:Service
+#                  Value: sundae-sync-v2
+#                - Key: Name
+#                  Value: !Sub '${Env}-sundae-sync-v2-2b'
