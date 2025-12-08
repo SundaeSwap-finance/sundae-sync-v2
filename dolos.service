@@ -1,0 +1,15 @@
+[Unit]
+Description=Dolos
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=ec2-user
+ExecStart=/home/ec2-user/dolos/dolos daemon
+WorkingDirectory=/home/ec2-user/dolos
+
+[Install]
+WantedBy=multi-user.target
