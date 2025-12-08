@@ -201,7 +201,7 @@ Resources:
         Properties:
             LaunchTemplate:
                 LaunchTemplateId: !Ref SundaeSyncLaunchTemplateV2
-                Version: !GetAtt SundaeSyncLaunchTemplate.LatestVersionNumber
+                Version: !GetAtt SundaeSyncLaunchTemplateV2.LatestVersionNumber
             SubnetId: !FindInMap [Env, !Ref Env, SubnetA]
             Tags:
                 - Key: sundae-labs:cost-allocation:Service
@@ -214,8 +214,8 @@ Resources:
         Properties:
             LaunchTemplate:
                 LaunchTemplateId: !Ref SundaeSyncLaunchTemplateV2
-                Version: !GetAtt SundaeSyncLaunchTemplate.LatestVersionNumber
-            SubnetId: !FindInMap [Env, !Ref Env, SubnetA]
+                Version: !GetAtt SundaeSyncLaunchTemplateV2.LatestVersionNumber
+            SubnetId: !FindInMap [Env, !Ref Env, SubnetB]
             Tags:
                 - Key: sundae-labs:cost-allocation:Service
                   Value: sundae-sync-v2
