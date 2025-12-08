@@ -169,10 +169,10 @@ Resources:
             Roles:
               - !Ref KinesisRole
 
-    SundaeSyncLaunchTemplate:
+    SundaeSyncLaunchTemplateV2:
         Type: AWS::EC2::LaunchTemplate
         Properties:
-            LaunchTemplateName: !Sub "${Env}-sundae-sync-v2-launch-template"
+            LaunchTemplateName: !Sub "${Env}-sundae-sync-v2-launch-template-v2"
             LaunchTemplateData:
                 BlockDeviceMappings:
                     - DeviceName: "/dev/xvda"
@@ -200,7 +200,7 @@ Resources:
         Type: 'AWS::EC2::Instance'
         Properties:
             LaunchTemplate:
-                LaunchTemplateId: !Ref SundaeSyncLaunchTemplate
+                LaunchTemplateId: !Ref SundaeSyncLaunchTemplateV2
                 Version: !GetAtt SundaeSyncLaunchTemplate.LatestVersionNumber
             SubnetId: !FindInMap [Env, !Ref Env, SubnetA]
             Tags:
@@ -213,7 +213,7 @@ Resources:
         Type: 'AWS::EC2::Instance'
         Properties:
             LaunchTemplate:
-                LaunchTemplateId: !Ref SundaeSyncLaunchTemplate
+                LaunchTemplateId: !Ref SundaeSyncLaunchTemplateV2
                 Version: !GetAtt SundaeSyncLaunchTemplate.LatestVersionNumber
             SubnetId: !FindInMap [Env, !Ref Env, SubnetA]
             Tags:
