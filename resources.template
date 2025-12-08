@@ -196,30 +196,28 @@ Resources:
                     - Key: sundae-labs:cost-allocation:Service
                       Value: sundae-sync-v2
 
-#    SundaeSyncInstance2A:
-#        Type: 'AWS::EC2::Instance'
-#        UpdateReplacePolicy: Delete
-#        Properties:
-#            LaunchTemplate:
-#                LaunchTemplateId: !Ref SundaeSyncLaunchTemplate
-#                Version: !GetAtt SundaeSyncLaunchTemplate.LatestVersionNumber
-#            SubnetId: !FindInMap [Env, !Ref Env, SubnetA]
-#            Tags:
-#                - Key: sundae-labs:cost-allocation:Service
-#                  Value: sundae-sync-v2
-#                - Key: Name
-#                  Value: !Sub '${Env}-sundae-sync-v2-2a'
-#
-#    SundaeSyncInstance2B:
-#        Type: 'AWS::EC2::Instance'
-#        UpdateReplacePolicy: Delete
-#        Properties:
-#            LaunchTemplate:
-#                LaunchTemplateId: !Ref SundaeSyncLaunchTemplate
-#                Version: !GetAtt SundaeSyncLaunchTemplate.LatestVersionNumber
-#            SubnetId: !FindInMap [Env, !Ref Env, SubnetA]
-#            Tags:
-#                - Key: sundae-labs:cost-allocation:Service
-#                  Value: sundae-sync-v2
-#                - Key: Name
-#                  Value: !Sub '${Env}-sundae-sync-v2-2b'
+    SundaeSyncInstance2A:
+        Type: 'AWS::EC2::Instance'
+        Properties:
+            LaunchTemplate:
+                LaunchTemplateId: !Ref SundaeSyncLaunchTemplate
+                Version: !GetAtt SundaeSyncLaunchTemplate.LatestVersionNumber
+            SubnetId: !FindInMap [Env, !Ref Env, SubnetA]
+            Tags:
+                - Key: sundae-labs:cost-allocation:Service
+                  Value: sundae-sync-v2
+                - Key: Name
+                  Value: !Sub '${Env}-sundae-sync-v2-2a'
+
+    SundaeSyncInstance2B:
+        Type: 'AWS::EC2::Instance'
+        Properties:
+            LaunchTemplate:
+                LaunchTemplateId: !Ref SundaeSyncLaunchTemplate
+                Version: !GetAtt SundaeSyncLaunchTemplate.LatestVersionNumber
+            SubnetId: !FindInMap [Env, !Ref Env, SubnetA]
+            Tags:
+                - Key: sundae-labs:cost-allocation:Service
+                  Value: sundae-sync-v2
+                - Key: Name
+                  Value: !Sub '${Env}-sundae-sync-v2-2b'
