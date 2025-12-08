@@ -7,32 +7,21 @@ Parameters:
 
 Mappings:
   Env:
-    local:
-      Subnets: []
     preview:
       Image: 'ami-00fa9ca3dffffc050'
       Snapshot: 'snap-04d9283dd7b270dc8'
-      Subnets:
-        - AvailabilityZone: us-east-2a
-          SubnetId: subnet-08fe76b5c6dc035d0
-        - AvailabilityZone: us-east-2b
-          SubnetId: subnet-0797a471ba5029682
+      SubnetA: subnet-08fe76b5c6dc035d0
+      SubnetB: subnet-0797a471ba5029682
     mainnet:
-      Image: 'ami-0e950d515ccaecdc3'
+      Image: 'ami-0189fd164c79c987a'
       Snapshot: 'snap-01b2cb5ae70f0b0da'
-      Subnets:
-        - AvailabilityZone: us-east-2a
-          SubnetId: subnet-00b61ede02fae91f3
-        - AvailabilityZone: us-east-2b
-          SubnetId: subnet-0556e5d304dc5e443
+      SubnetA: subnet-00b61ede02fae91f3
+      SubnetB: subnet-0556e5d304dc5e443
     cardano-tom:
       Image: 'ami-07feb56dadb897a30'
       Snapshot: 'snap-047e50379c2d1fce9'
-      Subnets:
-        - AvailabilityZone: us-east-2a
-          SubnetId: subnet-043cc56533b840171
-        - AvailabilityZone: us-east-2b
-          SubnetId: subnet-069b2d28c03bbeaa1
+      SubnetA: subnet-043cc56533b840171
+      SubnetB: subnet-069b2d28c03bbeaa1
 
 Resources:
     ArchiveBucket:
@@ -197,34 +186,38 @@ Resources:
                 IamInstanceProfile:
                     Name: !Ref KinesisRoleInstanceProfile
                 ImageId: !FindInMap [Env, !Ref Env, Image]
-                InstanceType: t2.small
+                InstanceType: t2.medium
                 KeyName: pi
                 PrivateDnsNameOptions:
                     HostnameType: resource-name
-                NetworkInterfaces:
-                    - DeviceIndex: 0
-                      AssociatePublicIpAddress: true
             TagSpecifications:
                 - ResourceType: "launch-template"
                   Tags:
                     - Key: sundae-labs:cost-allocation:Service
                       Value: sundae-sync-v2
 
-    SundaeSyncInstances:
-        Type: 'AWS::EC2::EC2Fleet'
+    SundaeSyncInstance2A:
+        Type: 'AWS::EC2::Instance'
         Properties:
-            ExcessCapacityTerminationPolicy: 'termination'
-            TagSpecifications:
-                - ResourceType: 'instance'
-                  Tags:
-                    - Key: sundae-labs:cost-allocation:Service
-                      Value: sundae-sync-v2
-            TargetCapacitySpecification:
-                TotalTargetCapacity: 2
-                OnDemandTargetCapacity: 1
-                DefaultTargetCapacityType: 'spot'
-            LaunchTemplateConfigs:
-                - LaunchTemplateSpecification:
-                    LaunchTemplateId: !Ref SundaeSyncLaunchTemplate
-                    Version: $Latest
-                  Overrides: !FindInMap [Env, !Ref Env, Subnets]
+            LaunchTemplate:
+                LaunchTemplateId: !Ref SundaeSyncLaunchTemplate
+                Version: !GetAtt SundaeSyncLaunchTemplate.LatestVersionNumber
+            SubnetId: !FindInMap [Env, !Ref Env, SubnetA]
+            Tags:
+                - Key: sundae-labs:cost-allocation:Service
+                  Value: sundae-sync-v2
+                - Key: Name
+                  Value: !Sub '${Env}-sundae-sync-v2-2a'
+
+    SundaeSyncInstance2B:
+        Type: 'AWS::EC2::Instance'
+        Properties:
+            LaunchTemplate:
+                LaunchTemplateId: !Ref SundaeSyncLaunchTemplate
+                Version: !GetAtt SundaeSyncLaunchTemplate.LatestVersionNumber
+            SubnetId: !FindInMap [Env, !Ref Env, SubnetA]
+            Tags:
+                - Key: sundae-labs:cost-allocation:Service
+                  Value: sundae-sync-v2
+                - Key: Name
+                  Value: !Sub '${Env}-sundae-sync-v2-2b'
