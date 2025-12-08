@@ -8,7 +8,7 @@ Parameters:
 Mappings:
   Env:
     preview:
-      Image: 'ami-00fa9ca3dffffc050'
+      Image: 'ami-0d9f51894610e8834'
       Snapshot: 'snap-04d9283dd7b270dc8'
       SubnetA: subnet-08fe76b5c6dc035d0
       SubnetB: subnet-0797a471ba5029682
