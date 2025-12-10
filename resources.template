@@ -16,7 +16,7 @@ Mappings:
       SubnetA: subnet-00b61ede02fae91f3
       SubnetB: subnet-0556e5d304dc5e443
     cardano-tom:
-      Image: 'ami-07feb56dadb897a30'
+      Image: 'ami-01e5855db5558048c'
       SubnetA: subnet-043cc56533b840171
       SubnetB: subnet-069b2d28c03bbeaa1
 
