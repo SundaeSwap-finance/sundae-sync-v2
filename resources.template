@@ -24,6 +24,9 @@ Mappings:
       SubnetA: subnet-043cc56533b840171
       SubnetB: subnet-069b2d28c03bbeaa1
 
+Conditions:
+  IsNotMainnet: !Not [!Equals [!Ref Env, 'mainnet']]
+
 Resources:
     ArchiveBucket:
         Type: AWS::S3::Bucket
@@ -161,6 +164,28 @@ Resources:
                           - 'kinesis:GetShardIterator'
                         Resource:
                           - !Sub 'arn:aws:kinesis:us-east-2:${AWS::AccountId}:stream/${Env}-sundae-sync-v2--*'
+                      - !If
+                        - IsNotMainnet
+                        - Effect: Allow
+                          Action:
+                            - 'kinesis:Describe*'
+                            - 'kinesis:PutRecord'
+                            - 'kinesis:PutRecords'
+                          Resource:
+                            - !Sub 'arn:aws:kinesis:us-east-2:${AWS::AccountId}:stream/${Env}-sundae-sync--*'
+                        - !Ref AWS::NoValue
+                      - !If
+                        - IsNotMainnet
+                        - Effect: Allow
+                          Action:
+                            - 'dynamodb:DescribeTable'
+                            - 'dynamodb:GetItem'
+                            - 'dynamodb:Query'
+                            - 'dynamodb:PutItem'
+                            - 'dynamodb:UpdateItem'
+                          Resource:
+                            - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Env}-sundae-sync--*'
+                        - !Ref AWS::NoValue
 
     KinesisRoleInstanceProfile:
         Type: AWS::IAM::InstanceProfile
