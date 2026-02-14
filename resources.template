@@ -26,6 +26,7 @@ Mappings:
 
 Conditions:
   IsNotMainnet: !Not [!Equals [!Ref Env, 'mainnet']]
+  HasAlerts: !Equals [!Ref Env, 'mainnet']
 
 Resources:
     ArchiveBucket:
@@ -246,3 +247,49 @@ Resources:
                   Value: sundae-sync-v2
                 - Key: Name
                   Value: !Sub '${Env}-sundae-sync-v2-2b'
+
+    # ---- Monitoring Alarms ----
+
+    KinesisIteratorAgeAlarm:
+        Condition: HasAlerts
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+            AlarmName: !Sub '${Env}-sync-indexer-stalled'
+            AlarmDescription: 'Sync v2 Kinesis consumer is >5 minutes behind — indexer may be stalled'
+            Namespace: AWS/Kinesis
+            MetricName: GetRecords.IteratorAgeMilliseconds
+            Dimensions:
+                - Name: StreamName
+                  Value: !Sub '${Env}-sundae-sync-v2--all'
+            Statistic: Maximum
+            Period: 300
+            EvaluationPeriods: 2
+            Threshold: 300000
+            ComparisonOperator: GreaterThanThreshold
+            TreatMissingData: breaching
+            AlarmActions:
+                - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${Env}-sundae-alerts-critical'
+            OKActions:
+                - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${Env}-sundae-alerts-critical'
+
+    KinesisReadThrottleAlarm:
+        Condition: HasAlerts
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+            AlarmName: !Sub '${Env}-sync-kinesis-read-throttled'
+            AlarmDescription: 'Kinesis read throughput exceeded — consumers being throttled'
+            Namespace: AWS/Kinesis
+            MetricName: ReadProvisionedThroughputExceeded
+            Dimensions:
+                - Name: StreamName
+                  Value: !Sub '${Env}-sundae-sync-v2--all'
+            Statistic: Sum
+            Period: 300
+            EvaluationPeriods: 1
+            Threshold: 10
+            ComparisonOperator: GreaterThanThreshold
+            TreatMissingData: notBreaching
+            AlarmActions:
+                - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${Env}-sundae-alerts-info'
+            OKActions:
+                - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${Env}-sundae-alerts-info'
