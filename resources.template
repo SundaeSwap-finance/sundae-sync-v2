@@ -204,7 +204,7 @@ Resources:
                 BlockDeviceMappings:
                     - DeviceName: "/dev/xvda"
                       Ebs:
-                          DeleteOnTermination: true
+                          DeleteOnTermination: false
                           Iops: 3000
                           Throughput: 125
                           VolumeSize: 512

@@ -16,6 +16,12 @@ type Datum struct {
 	Payload      dynamodb.AttributeValue
 }
 
+type Script struct {
+	PlutusV1 string `dynamodbav:"plutusV1,omitempty"` // base64 encoded
+	PlutusV2 string `dynamodbav:"plutusV2,omitempty"` // base64 encoded
+	PlutusV3 string `dynamodbav:"plutusV3,omitempty"` // base64 encoded
+}
+
 type Asset struct {
 	Name       string `dynamodbav:"name"` // base64 encoded token name
 	OutputCoin string `dynamodbav:"outputCoin"`
@@ -27,10 +33,11 @@ type Policy struct {
 }
 
 type UTxO struct {
-	Address string   `dynamodbav:"address"` // base64 encoded
-	Coin    string   `dynamodbav:"coin"`    // lovelace
-	Assets  []Policy `dynamodbav:"assets"`
-	// TODO: datum, script!
+	Address  string   `dynamodbav:"address"`            // base64 encoded
+	Coin     string   `dynamodbav:"coin"`               // lovelace
+	Assets   []Policy `dynamodbav:"assets"`
+	DatumCBOR  []byte `dynamodbav:"datum,omitempty"`  // raw datum CBOR
+	Script *Script `dynamodbav:"script,omitempty"` // reference script
 }
 
 func (u UTxO) Value() shared.Value {
