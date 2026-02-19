@@ -16,7 +16,8 @@ use pallas::{
     },
 };
 use sundae_sync_v2::archive::{Archive, NoContext};
-use tracing::info;
+use tokio::time::{sleep, Duration};
+use tracing::{info, warn};
 
 use crate::args::Args;
 
@@ -144,7 +145,21 @@ async fn restore_history(
         };
         let point = Point::Specific(header.slot, header.hash.to_vec());
         let height = header.height;
-        archive.save(&block, raw_block).await?;
+        let mut attempt = 0u32;
+        loop {
+            match archive.save(&block, raw_block.clone()).await {
+                Ok(()) => break,
+                Err(e) => {
+                    attempt += 1;
+                    if attempt > 10 {
+                        return Err(e).context("archive.save failed after 10 retries");
+                    }
+                    let delay = Duration::from_millis(100 * 2u64.pow(attempt.min(7)));
+                    warn!("archive.save failed (attempt {attempt}/10, retrying in {delay:?}): {e:#}");
+                    sleep(delay).await;
+                }
+            }
+        }
         if height.is_multiple_of(100) {
             info!("Restored up to {point:?}");
         }
