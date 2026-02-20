@@ -196,39 +196,25 @@ Resources:
             Roles:
               - !Ref KinesisRole
 
-    SundaeSyncLaunchTemplateV2:
-        Type: AWS::EC2::LaunchTemplate
-        Properties:
-            LaunchTemplateName: !Sub "${Env}-sundae-sync-v2-launch-template-v2"
-            LaunchTemplateData:
-                BlockDeviceMappings:
-                    - DeviceName: "/dev/xvda"
-                      Ebs:
-                          DeleteOnTermination: false
-                          Iops: 3000
-                          Throughput: 125
-                          VolumeSize: 512
-                          VolumeType: "gp3"
-                IamInstanceProfile:
-                    Name: !Ref KinesisRoleInstanceProfile
-                ImageId: !FindInMap [Env, !Ref Env, Image]
-                InstanceType: t2.medium
-                KeyName: pi
-                PrivateDnsNameOptions:
-                    HostnameType: resource-name
-            TagSpecifications:
-                - ResourceType: "launch-template"
-                  Tags:
-                    - Key: sundae-labs:cost-allocation:Service
-                      Value: sundae-sync-v2
-
     SundaeSyncInstance2A:
         Type: 'AWS::EC2::Instance'
         DeletionPolicy: Retain
+        UpdateReplacePolicy: Retain
         Properties:
-            LaunchTemplate:
-                LaunchTemplateId: !Ref SundaeSyncLaunchTemplateV2
-                Version: !GetAtt SundaeSyncLaunchTemplateV2.LatestVersionNumber
+            BlockDeviceMappings:
+                - DeviceName: "/dev/xvda"
+                  Ebs:
+                      DeleteOnTermination: false
+                      Iops: 3000
+                      Throughput: 125
+                      VolumeSize: 512
+                      VolumeType: "gp3"
+            IamInstanceProfile: !Ref KinesisRoleInstanceProfile
+            ImageId: !FindInMap [Env, !Ref Env, Image]
+            InstanceType: t2.medium
+            KeyName: pi
+            PrivateDnsNameOptions:
+                HostnameType: resource-name
             SubnetId: !FindInMap [Env, !Ref Env, SubnetA]
             Tags:
                 - Key: sundae-labs:cost-allocation:Service
@@ -239,10 +225,22 @@ Resources:
     SundaeSyncInstance2B:
         Type: 'AWS::EC2::Instance'
         DeletionPolicy: Retain
+        UpdateReplacePolicy: Retain
         Properties:
-            LaunchTemplate:
-                LaunchTemplateId: !Ref SundaeSyncLaunchTemplateV2
-                Version: !GetAtt SundaeSyncLaunchTemplateV2.LatestVersionNumber
+            BlockDeviceMappings:
+                - DeviceName: "/dev/xvda"
+                  Ebs:
+                      DeleteOnTermination: false
+                      Iops: 3000
+                      Throughput: 125
+                      VolumeSize: 512
+                      VolumeType: "gp3"
+            IamInstanceProfile: !Ref KinesisRoleInstanceProfile
+            ImageId: !FindInMap [Env, !Ref Env, Image]
+            InstanceType: t2.medium
+            KeyName: pi
+            PrivateDnsNameOptions:
+                HostnameType: resource-name
             SubnetId: !FindInMap [Env, !Ref Env, SubnetB]
             Tags:
                 - Key: sundae-labs:cost-allocation:Service
