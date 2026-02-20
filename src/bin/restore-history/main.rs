@@ -114,6 +114,11 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
     info!("Starting sundae-sync-v2 restore history");
+    if rustls::crypto::CryptoProvider::install_default(rustls::crypto::ring::default_provider())
+        .is_err()
+    {
+        warn!("Could not configure CryptoProvider");
+    }
 
     let archive = construct_archive(&args).await?;
 

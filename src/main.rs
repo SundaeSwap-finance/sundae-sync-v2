@@ -19,7 +19,7 @@ use anyhow::Result;
 use args::Args;
 use tokio::{signal, task::JoinSet};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 use worker::Worker;
 
 #[tokio::main]
@@ -27,6 +27,11 @@ async fn main() -> Result<()> {
     let cancel = CancellationToken::new();
     tracing_subscriber::fmt::init();
     info!("Starting sundae-sync-v2");
+    if rustls::crypto::CryptoProvider::install_default(rustls::crypto::ring::default_provider())
+        .is_err()
+    {
+        warn!("Could not configure CryptoProvider");
+    }
 
     let args = Args::parse();
     let mut tasks: JoinSet<Result<()>> = JoinSet::new();
