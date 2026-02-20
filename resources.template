@@ -206,7 +206,7 @@ Resources:
                   Ebs:
                       DeleteOnTermination: false
                       Iops: 3000
-                      Throughput: 125
+
                       VolumeSize: 512
                       VolumeType: "gp3"
             IamInstanceProfile: !Ref KinesisRoleInstanceProfile
@@ -232,7 +232,7 @@ Resources:
                   Ebs:
                       DeleteOnTermination: false
                       Iops: 3000
-                      Throughput: 125
+
                       VolumeSize: 512
                       VolumeType: "gp3"
             IamInstanceProfile: !Ref KinesisRoleInstanceProfile
