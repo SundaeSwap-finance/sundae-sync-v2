@@ -155,7 +155,9 @@ async fn restore_history(
                         return Err(e).context("archive.save failed after 10 retries");
                     }
                     let delay = Duration::from_millis(100 * 2u64.pow(attempt.min(7)));
-                    warn!("archive.save failed (attempt {attempt}/10, retrying in {delay:?}): {e:#}");
+                    warn!(
+                        "archive.save failed (attempt {attempt}/10, retrying in {delay:?}): {e:#}"
+                    );
                     sleep(delay).await;
                 }
             }

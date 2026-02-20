@@ -130,6 +130,7 @@ impl FilterConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::u64_to_bigint;
 
     #[test]
     fn test_token_filter_policy_match() {
@@ -175,8 +176,9 @@ mod tests {
             policy_id: policy_id.clone().into(),
             assets: vec![utxorpc::spec::cardano::Asset {
                 name: asset_name.clone().into(),
-                output_coin: 100,
-                mint_coin: 0,
+                quantity: Some(utxorpc::spec::cardano::asset::Quantity::OutputCoin(
+                    u64_to_bigint(100),
+                )),
             }],
             redeemer: None,
         }];
@@ -195,8 +197,9 @@ mod tests {
             policy_id: vec![0xff, 0xee, 0xdd].into(),
             assets: vec![utxorpc::spec::cardano::Asset {
                 name: vec![0x04, 0x05].into(),
-                output_coin: 100,
-                mint_coin: 0,
+                quantity: Some(utxorpc::spec::cardano::asset::Quantity::OutputCoin(
+                    u64_to_bigint(100),
+                )),
             }],
             redeemer: None,
         }];
@@ -216,8 +219,9 @@ mod tests {
             policy_id: policy_id.clone().into(),
             assets: vec![utxorpc::spec::cardano::Asset {
                 name: vec![0xff, 0xee].into(),
-                output_coin: 100,
-                mint_coin: 0,
+                quantity: Some(utxorpc::spec::cardano::asset::Quantity::OutputCoin(
+                    u64_to_bigint(100),
+                )),
             }],
             redeemer: None,
         }];
@@ -371,7 +375,7 @@ mod tests {
         let tx = Tx {
             withdrawals: vec![utxorpc::spec::cardano::Withdrawal {
                 reward_account: credential.into(),
-                coin: 1000,
+                coin: Some(u64_to_bigint(1000)),
                 redeemer: None,
             }],
             ..Default::default()
@@ -389,7 +393,7 @@ mod tests {
         let tx = Tx {
             withdrawals: vec![utxorpc::spec::cardano::Withdrawal {
                 reward_account: vec![0xff, 0xee, 0xdd].into(),
-                coin: 1000,
+                coin: Some(u64_to_bigint(1000)),
                 redeemer: None,
             }],
             ..Default::default()

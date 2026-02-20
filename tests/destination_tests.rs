@@ -40,8 +40,10 @@ async fn create_test_destination(
 
 fn make_point(index: u64) -> BlockRef {
     BlockRef {
-        index,
+        slot: index,
         hash: Bytes::from(format!("hash-{}", index).as_bytes().to_vec()),
+        timestamp: 0,
+        height: 0,
     }
 }
 
@@ -62,7 +64,7 @@ async fn test_destination_commit_succeeds_on_correct_sequence() -> Result<()> {
     .await?;
 
     // Verify it updated
-    assert_eq!(dest.last_seen_point.index, 101);
+    assert_eq!(dest.last_seen_point.slot, 101);
     assert_eq!(dest.sequence_number, Some("seq-101".to_string()));
 
     Ok(())
@@ -205,11 +207,11 @@ async fn test_destination_recovery_points_rotation() -> Result<()> {
     );
 
     // Should have the most recent 15 (106-120)
-    assert_eq!(dest.recovery_points[0].index, 106, "Oldest should be 106");
-    assert_eq!(dest.recovery_points[14].index, 120, "Newest should be 120");
+    assert_eq!(dest.recovery_points[0].slot, 106, "Oldest should be 106");
+    assert_eq!(dest.recovery_points[14].slot, 120, "Newest should be 120");
 
     // Current point should be 120
-    assert_eq!(dest.last_seen_point.index, 120);
+    assert_eq!(dest.last_seen_point.slot, 120);
 
     Ok(())
 }
@@ -341,7 +343,7 @@ async fn test_destination_commit_adds_to_recovery_points() -> Result<()> {
     assert_eq!(dest.recovery_points.len(), initial_recovery_count + 1);
 
     // Last recovery point should be the newly committed point
-    assert_eq!(dest.recovery_points.last().unwrap().index, 101);
+    assert_eq!(dest.recovery_points.last().unwrap().slot, 101);
 
     Ok(())
 }

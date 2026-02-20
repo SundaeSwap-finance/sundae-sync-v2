@@ -176,7 +176,7 @@ impl Destination {
                     .await
                 {
                     Ok(_) => {
-                        info!("Repaired destination {} to point {}", self.pk, point.index);
+                        info!("Repaired destination {} to point {}", self.pk, point.slot);
                     }
                     Err(e) => {
                         // Check if this is a conditional check failure
@@ -185,7 +185,7 @@ impl Destination {
                             // Another worker already advanced past this point - we're caught up
                             info!(
                                 "Destination {} already advanced past repair point {}, repair complete",
-                                self.pk, point.index
+                                self.pk, point.slot
                             );
                             break;
                         }
@@ -216,7 +216,7 @@ impl Destination {
 }
 
 pub fn point_to_string(point: &BlockRef) -> String {
-    format!("{}/{}", point.index, point.hash.encode_hex::<String>())
+    format!("{}/{}", point.slot, point.hash.encode_hex::<String>())
 }
 pub fn serialize_point<S>(point: &BlockRef, serializer: S) -> std::result::Result<S::Ok, S::Error>
 where
@@ -243,9 +243,14 @@ pub fn string_to_point(s: String) -> Result<BlockRef> {
     if parts.len() != 2 {
         bail!("invalid point: multiple slashes!");
     }
-    let index = parts[0].parse()?;
+    let slot = parts[0].parse()?;
     let hash = Bytes::from_iter(hex::decode(parts[1])?);
-    Ok(BlockRef { index, hash })
+    Ok(BlockRef {
+        slot,
+        hash,
+        height: 0,
+        timestamp: 0,
+    })
 }
 pub fn deserialize_point<'de, D>(deserializer: D) -> std::result::Result<BlockRef, D::Error>
 where
@@ -280,8 +285,10 @@ mod tests {
     #[test]
     fn test_point_to_string() {
         let point = BlockRef {
-            index: 12345,
+            slot: 12345,
             hash: bytes::Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]),
+            height: 0,
+            timestamp: 0,
         };
         let result = point_to_string(&point);
         assert_eq!(result, "12345/deadbeef");
@@ -291,7 +298,7 @@ mod tests {
     fn test_string_to_point() {
         let input = "12345/deadbeef".to_string();
         let result = string_to_point(input).unwrap();
-        assert_eq!(result.index, 12345);
+        assert_eq!(result.slot, 12345);
         assert_eq!(
             result.hash,
             bytes::Bytes::from(vec![0xde, 0xad, 0xbe, 0xef])
@@ -301,12 +308,14 @@ mod tests {
     #[test]
     fn test_point_roundtrip() {
         let original = BlockRef {
-            index: 98765,
+            slot: 98765,
             hash: bytes::Bytes::from(vec![0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]),
+            height: 0,
+            timestamp: 0,
         };
         let serialized = point_to_string(&original);
         let deserialized = string_to_point(serialized).unwrap();
-        assert_eq!(original.index, deserialized.index);
+        assert_eq!(original.slot, deserialized.slot);
         assert_eq!(original.hash, deserialized.hash);
     }
 
@@ -337,17 +346,23 @@ mod tests {
             filter: None,
             sequence_number: Some("12345".to_string()),
             last_seen_point: BlockRef {
-                index: 100,
+                slot: 100,
                 hash: bytes::Bytes::from(vec![0xaa, 0xbb, 0xcc, 0xdd]),
+                height: 0,
+                timestamp: 0,
             },
             recovery_points: vec![
                 BlockRef {
-                    index: 90,
+                    slot: 90,
                     hash: bytes::Bytes::from(vec![0x11, 0x22, 0x33, 0x44]),
+                    height: 0,
+                    timestamp: 0,
                 },
                 BlockRef {
-                    index: 95,
+                    slot: 95,
                     hash: bytes::Bytes::from(vec![0x55, 0x66, 0x77, 0x88]),
+                    height: 0,
+                    timestamp: 0,
                 },
             ],
             enabled: true,
@@ -358,18 +373,15 @@ mod tests {
         let deserialized: Destination = serde_json::from_str(&json).unwrap();
 
         assert_eq!(dest.pk, deserialized.pk);
-        assert_eq!(
-            dest.last_seen_point.index,
-            deserialized.last_seen_point.index
-        );
+        assert_eq!(dest.last_seen_point.slot, deserialized.last_seen_point.slot);
         assert_eq!(dest.last_seen_point.hash, deserialized.last_seen_point.hash);
         assert_eq!(
             dest.recovery_points.len(),
             deserialized.recovery_points.len()
         );
         assert_eq!(
-            dest.recovery_points[0].index,
-            deserialized.recovery_points[0].index
+            dest.recovery_points[0].slot,
+            deserialized.recovery_points[0].slot
         );
     }
 
@@ -378,26 +390,30 @@ mod tests {
     #[test]
     fn test_point_serialization_with_empty_hash() {
         let point = BlockRef {
-            index: 0,
+            slot: 0,
             hash: bytes::Bytes::from(vec![]),
+            height: 0,
+            timestamp: 0,
         };
         let serialized = point_to_string(&point);
         assert_eq!(serialized, "0/");
         let deserialized = string_to_point(serialized).unwrap();
-        assert_eq!(deserialized.index, 0);
+        assert_eq!(deserialized.slot, 0);
         assert_eq!(deserialized.hash, bytes::Bytes::from(vec![]));
     }
 
     #[test]
     fn test_point_serialization_with_large_index() {
         let point = BlockRef {
-            index: u64::MAX,
+            slot: u64::MAX,
             hash: bytes::Bytes::from(vec![0xff, 0xff]),
+            height: 0,
+            timestamp: 0,
         };
         let serialized = point_to_string(&point);
         assert_eq!(serialized, "18446744073709551615/ffff");
         let deserialized = string_to_point(serialized).unwrap();
-        assert_eq!(deserialized.index, u64::MAX);
+        assert_eq!(deserialized.slot, u64::MAX);
     }
 
     #[test]
@@ -428,12 +444,14 @@ mod tests {
             0xcc, 0xdd, 0xee, 0xff,
         ];
         let point = BlockRef {
-            index: 42,
+            slot: 42,
             hash: bytes::Bytes::from(hash.clone()),
+            height: 0,
+            timestamp: 0,
         };
         let serialized = point_to_string(&point);
         let deserialized = string_to_point(serialized).unwrap();
-        assert_eq!(deserialized.index, 42);
+        assert_eq!(deserialized.slot, 42);
         assert_eq!(deserialized.hash, bytes::Bytes::from(hash));
     }
 
@@ -448,8 +466,10 @@ mod tests {
     fn test_point_to_string_lowercase_hex() {
         // Verify that hex encoding produces lowercase
         let point = BlockRef {
-            index: 1,
+            slot: 1,
             hash: bytes::Bytes::from(vec![0xAB, 0xCD, 0xEF]),
+            height: 0,
+            timestamp: 0,
         };
         let result = point_to_string(&point);
         assert_eq!(result, "1/abcdef");
