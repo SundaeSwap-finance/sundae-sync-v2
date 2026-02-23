@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_bytes_base64::Bytes;
 use serde_dynamo::{to_attribute_value, to_item};
 use tracing::trace;
-use utxorpc::spec::cardano::{Block, Datum as utxorpcDatum, Multiasset, Script};
+use utxorpc::spec::cardano::{asset::Quantity, Block, Datum as utxorpcDatum, Redeemer, Script};
 
-use crate::utils::{bigint_to_u64, elapsed};
+use crate::utils::{bigint_to_string, bigint_to_u64, elapsed};
 
 #[derive(Clone)]
 pub struct Archive {
@@ -31,6 +31,19 @@ pub struct HeightRef {
     pub sk: String,
     pub hash: String,
     pub location: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Multiasset {
+    pub policy_id: Bytes,
+    pub assets: Vec<Asset>,
+    pub redeemer: Option<Redeemer>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Asset {
+    pub name: Bytes,
+    pub output_coin: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -63,7 +76,25 @@ impl From<utxorpc::spec::cardano::TxOutput> for TxOutput {
                 .as_ref()
                 .and_then(bigint_to_u64)
                 .expect("value did not fit in bigint"),
-            assets: value.assets.to_vec(),
+            assets: value
+                .assets
+                .into_iter()
+                .map(|m| Multiasset {
+                    policy_id: m.policy_id.to_vec().into(),
+                    redeemer: m.redeemer,
+                    assets: m
+                        .assets
+                        .into_iter()
+                        .map(|a| Asset {
+                            name: a.name.to_vec().into(),
+                            output_coin: match a.quantity {
+                                Some(Quantity::OutputCoin(o)) => bigint_to_string(&o),
+                                _ => "0".to_string(),
+                            },
+                        })
+                        .collect(),
+                })
+                .collect(),
             datum: value
                 .datum
                 .map(|d| Datum::Raw(d.original_cbor.to_vec().into())),
