@@ -61,50 +61,59 @@ impl Lock {
     /// Renew an existing lock, setting the expiration to now + duration
     pub async fn renew(mut self, duration: Duration) -> Result<Option<Lock>> {
         trace!("Renewing lock");
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time went backwards");
+        loop {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards");
 
-        self.record.expiration = (now + duration).as_millis() as u64;
-        // Insert the item into dynamo, with a condition so it succeeds
-        // only if one of the following is true:
-        // - The lock doesn't exist at all
-        // - The lock is already held by this instance
-        // - The lock expired in the past
-        let result = self
-            .dynamo
-            .put_item()
-            .table_name(&self.table)
-            .set_item(Some(to_item(&self.record)?))
-            .condition_expression(
-                "attribute_not_exists(pk) OR instance_id = :instance_id OR expiration < :now",
-            )
-            .expression_attribute_values(
-                ":instance_id",
-                AttributeValue::S(self.record.instance_id.clone()),
-            )
-            .expression_attribute_values(":now", AttributeValue::N(now.as_millis().to_string()))
-            .send()
-            .await;
+            self.record.expiration = (now + duration).as_millis() as u64;
+            // Insert the item into dynamo, with a condition so it succeeds
+            // only if one of the following is true:
+            // - The lock doesn't exist at all
+            // - The lock is already held by this instance
+            // - The lock expired in the past
+            let result = self
+                .dynamo
+                .put_item()
+                .table_name(&self.table)
+                .set_item(Some(to_item(&self.record)?))
+                .condition_expression(
+                    "attribute_not_exists(pk) OR instance_id = :instance_id OR expiration < :now",
+                )
+                .expression_attribute_values(
+                    ":instance_id",
+                    AttributeValue::S(self.record.instance_id.clone()),
+                )
+                .expression_attribute_values(":now", AttributeValue::N(now.as_millis().to_string()))
+                .return_values(aws_sdk_dynamodb::types::ReturnValue::AllOld)
+                .send()
+                .await;
 
-        match result {
-            Ok(_) => {
-                // If we succeeded in acquiring the lock, record it and return self
-                self.locked = true;
-                Ok(Some(self))
-            }
-            Err(SdkError::ServiceError(err)) => {
-                // If we failed just because of a conditional check
-                // then we just didn't acquire the lock; so report None instead of an error
-                let err = err.into_err();
-                if err.is_conditional_check_failed_exception() {
-                    return Ok(None);
+            match result {
+                Ok(res) => {
+                    if res.attributes.is_none() {
+                        // We just created the lock.
+                        // Try grabbing it again, to make sure nobody else "created" it at the same time
+                        continue;
+                    } else {
+                        // If we succeeded in acquiring the lock, record it and return self
+                        self.locked = true;
+                        break Ok(Some(self));
+                    }
                 }
-                // Otherwise, for some other kind of error, return that error
-                bail!("error acquiring lock: {:#?}", err);
-            }
-            err => {
-                bail!("failed to acquire lock: {:#?}", err);
+                Err(SdkError::ServiceError(err)) => {
+                    // If we failed just because of a conditional check
+                    // then we just didn't acquire the lock; so report None instead of an error
+                    let err = err.into_err();
+                    if err.is_conditional_check_failed_exception() {
+                        return Ok(None);
+                    }
+                    // Otherwise, for some other kind of error, return that error
+                    bail!("error acquiring lock: {:#?}", err);
+                }
+                err => {
+                    bail!("failed to acquire lock: {:#?}", err);
+                }
             }
         }
     }

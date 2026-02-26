@@ -9,7 +9,7 @@ publish = false
 default-run = "sundae-sync-v2"
 
 [dependencies]
-pallas = "0.33"
+pallas = { version = "1.0.0-alpha.4" }
 
 tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "signal"] }
 anyhow = "1.0"
@@ -17,7 +17,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 hex = "0.4.3"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-utxorpc = "0.11"
+utxorpc = "0.13"
 aws-config = "1.5.4"
 aws-sdk-dynamodb = "1.38.0"
 aws-sdk-s3 = "1.41.0"
@@ -31,6 +31,8 @@ tokio-util = "0.7.11"
 bytes = "1.11"
 prost = { version = "0.14", features = ["no-recursion-limit"] }
 futures = "0.3.30"
+num-bigint = "0.4.6"
+rustls = "0.23"
 serde_bytes = "0.11.15"
 serde_bytes_base64 = "0.1.1"
 

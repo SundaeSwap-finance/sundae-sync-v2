@@ -114,6 +114,11 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
     info!("Starting sundae-sync-v2 restore history");
+    if rustls::crypto::CryptoProvider::install_default(rustls::crypto::ring::default_provider())
+        .is_err()
+    {
+        warn!("Could not configure CryptoProvider");
+    }
 
     let archive = construct_archive(&args).await?;
 
@@ -155,7 +160,9 @@ async fn restore_history(
                         return Err(e).context("archive.save failed after 10 retries");
                     }
                     let delay = Duration::from_millis(100 * 2u64.pow(attempt.min(7)));
-                    warn!("archive.save failed (attempt {attempt}/10, retrying in {delay:?}): {e:#}");
+                    warn!(
+                        "archive.save failed (attempt {attempt}/10, retrying in {delay:?}): {e:#}"
+                    );
                     sleep(delay).await;
                 }
             }

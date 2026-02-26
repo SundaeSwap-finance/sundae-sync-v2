@@ -65,7 +65,7 @@ impl Broadcaster {
         // For each destination
         for destination in &mut self.destinations {
             // Ignore this destination if we're further back in the chain
-            if destination.last_seen_point.index > message.advance.index {
+            if destination.last_seen_point.slot > message.advance.slot {
                 continue;
             }
             // Check if we *should* send to this destination,

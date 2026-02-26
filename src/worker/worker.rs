@@ -52,7 +52,7 @@ impl Worker {
         let earliest_point = broadcaster
             .destinations
             .iter()
-            .min_by_key(|d| d.last_seen_point.index)
+            .min_by_key(|d| d.last_seen_point.slot)
             .unwrap();
         let intersect: Vec<_> = earliest_point
             .recovery_points
@@ -63,7 +63,7 @@ impl Worker {
 
         info!(
             "Starting from {}/{}",
-            earliest_point.last_seen_point.index,
+            earliest_point.last_seen_point.slot,
             earliest_point
                 .last_seen_point
                 .hash
@@ -88,26 +88,28 @@ impl Worker {
 
                     let start = SystemTime::now();
                     let point = BlockRef {
-                        index: header.slot,
+                        slot: header.slot,
                         hash: header.hash,
+                        timestamp: 0,
+                        height: header.height,
                     };
                     if is_roll_forward {
-                        self.archive.save(&block, bytes.to_vec()).await.context(format!("failed to archive {}/{}", point.index, block_hash))?;
+                        self.archive.save(&block, bytes.to_vec()).await.context(format!("failed to archive {}/{}", point.slot, block_hash))?;
 
                         let start = SystemTime::now();
                         let destinations = broadcaster.broadcast(block, BroadcastMessage {
                             undo: undo_stack.clone(),
                             advance: point.clone(),
-                        }).await.context(format!("failed to broadcast point {}/{}", point.index, block_hash))?;
+                        }).await.context(format!("failed to broadcast point {}/{}", point.slot, block_hash))?;
                         trace!("Message broadcast (elapsed={:?})", SystemTime::now().duration_since(start)?);
                         undo_stack.clear();
-                        info!("Roll forward {}/{} ({})", point.index, block_hash, destinations.join(", "));
+                        info!("Roll forward {}/{} ({})", point.slot, block_hash, destinations.join(", "));
                     } else {
-                        trace!("Unsaving {}/{}", point.index, block_hash);
-                        self.archive.unsave(&block).await.context(format!("failed to unsave point {}/{}", point.index, block_hash))?;
-                        trace!("Block {}/{} unsaved (elapsed={:?})", point.index, block_hash, elapsed(start));
+                        trace!("Unsaving {}/{}", point.slot, block_hash);
+                        self.archive.unsave(&block).await.context(format!("failed to unsave point {}/{}", point.slot, block_hash))?;
+                        trace!("Block {}/{} unsaved (elapsed={:?})", point.slot, block_hash, elapsed(start));
                         undo_stack.push(point.clone());
-                        info!("Undo block {}/{}", point.index, block_hash);
+                        info!("Undo block {}/{}", point.slot, block_hash);
                     }
                 }
             }
