@@ -206,9 +206,9 @@ Resources:
                   Ebs:
                       DeleteOnTermination: false
                       Iops: 3000
-
                       VolumeSize: 512
                       VolumeType: "gp3"
+            DisableApiTermination: true
             IamInstanceProfile: !Ref KinesisRoleInstanceProfile
             ImageId: !FindInMap [Env, !Ref Env, Image]
             InstanceType: t2.medium
@@ -232,9 +232,9 @@ Resources:
                   Ebs:
                       DeleteOnTermination: false
                       Iops: 3000
-
                       VolumeSize: 512
                       VolumeType: "gp3"
+            DisableApiTermination: true
             IamInstanceProfile: !Ref KinesisRoleInstanceProfile
             ImageId: !FindInMap [Env, !Ref Env, Image]
             InstanceType: t2.medium
