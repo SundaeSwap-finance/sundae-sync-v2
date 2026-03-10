@@ -7,7 +7,7 @@ use anyhow::Result;
 use aws_sdk_dynamodb::Client as DynamoClient;
 use tokio::{select, time::sleep};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 /// A lock thread is responsible for acquiring an exclusive
 /// lock, and then spawning a given worker thread while that
@@ -42,7 +42,13 @@ impl LockThread {
             }
             // Acquire the lock for a specific duration
             let lock =
-                Lock::acquire(self.dynamo.clone(), self.lock_duration, self.table.clone()).await?;
+                match Lock::acquire(self.dynamo.clone(), self.lock_duration, self.table.clone()).await {
+                    Ok(lock) => lock,
+                    Err(err) => {
+                        warn!("Error acquiring lock (will retry): {:?}", err);
+                        None
+                    }
+                };
             info!("Done");
             match lock {
                 None => {
@@ -89,7 +95,13 @@ impl LockThread {
                             }
                             // it's time to renew the lock
                             _ = sleep(self.lock_renew_freq) => {
-                                lock = lock.expect("not holding lock??").renew(self.lock_duration).await?;
+                                lock = match lock.expect("not holding lock??").renew(self.lock_duration).await {
+                                    Ok(renewed) => renewed,
+                                    Err(err) => {
+                                        warn!("Error renewing lock (will re-acquire): {:?}", err);
+                                        None
+                                    }
+                                };
                                 // we may fail to renew the lock!
                                 match &lock {
                                     Some(inner) => {

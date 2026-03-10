@@ -108,6 +108,7 @@ Resources:
         Description: "A kinesis stream that receives a notification for *all* blocks"
         Properties:
             Name: !Sub '${Env}-sundae-sync-v2--all'
+            RetentionPeriodHours: 2160
             ShardCount: 1
             StreamModeDetails:
                 StreamMode: 'PROVISIONED'
@@ -293,3 +294,47 @@ Resources:
                 - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${Env}-sundae-alerts-info'
             OKActions:
                 - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${Env}-sundae-alerts-info'
+
+    KinesisProducerStalledAlarm:
+        Condition: HasAlerts
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+            AlarmName: !Sub '${Env}-sync-producer-stalled'
+            AlarmDescription: 'No records written to Kinesis in 5 minutes — sundae-sync-v2 is likely down'
+            Namespace: AWS/Kinesis
+            MetricName: IncomingRecords
+            Dimensions:
+                - Name: StreamName
+                  Value: !Sub '${Env}-sundae-sync-v2--all'
+            Statistic: Sum
+            Period: 300
+            EvaluationPeriods: 1
+            Threshold: 1
+            ComparisonOperator: LessThanThreshold
+            TreatMissingData: breaching
+            AlarmActions:
+                - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${Env}-sundae-alerts-critical'
+            OKActions:
+                - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${Env}-sundae-alerts-critical'
+
+    KinesisPutRecordFailureAlarm:
+        Condition: HasAlerts
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+            AlarmName: !Sub '${Env}-sync-kinesis-put-failures'
+            AlarmDescription: 'Kinesis PutRecord calls are failing — producer may be unhealthy'
+            Namespace: AWS/Kinesis
+            MetricName: PutRecord.Success
+            Dimensions:
+                - Name: StreamName
+                  Value: !Sub '${Env}-sundae-sync-v2--all'
+            Statistic: Average
+            Period: 300
+            EvaluationPeriods: 2
+            Threshold: 1
+            ComparisonOperator: LessThanThreshold
+            TreatMissingData: notBreaching
+            AlarmActions:
+                - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${Env}-sundae-alerts-critical'
+            OKActions:
+                - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${Env}-sundae-alerts-critical'

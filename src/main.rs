@@ -87,12 +87,16 @@ async fn main() -> Result<()> {
         tasks.spawn(async move { lock_thread.maintain_lock(cancel, worker).await });
     }
 
-    // Wait for all our tasks to finish
+    // Wait for any task to finish; if one exits, shut everything down
     while let Some(result) = tasks.join_next().await {
         match result? {
             Ok(_) => info!("Task finished succesfully"),
             Err(err) => {
-                info!("Task finished with error: {:?}", err)
+                info!("Task finished with error: {:?}", err);
+                cancel.cancel();
+                // Drain remaining tasks before exiting
+                while let Some(_) = tasks.join_next().await {}
+                return Err(err);
             }
         }
     }
