@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
                 info!("Task finished with error: {:?}", err);
                 cancel.cancel();
                 // Drain remaining tasks before exiting
-                while let Some(_) = tasks.join_next().await {}
+                while tasks.join_next().await.is_some() {}
                 return Err(err);
             }
         }

@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use anyhow::Result;
 use aws_config::BehaviorVersion;
 use aws_sdk_dynamodb::{
@@ -7,8 +9,9 @@ use aws_sdk_dynamodb::{
     },
     Client as DynamoClient,
 };
-use testcontainers::{runners::AsyncRunner, ContainerAsync};
+use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::dynamodb_local::DynamoDb;
+use uuid::Uuid;
 
 #[allow(dead_code)]
 pub enum TableType {
@@ -16,13 +19,33 @@ pub enum TableType {
     Destination,
 }
 
-/// Sets up a DynamoDB Local container for testing
-/// Returns (container, client, table_name)
-pub async fn setup_dynamodb(
-    table_type: TableType,
-) -> Result<(ContainerAsync<DynamoDb>, DynamoClient, String)> {
-    let container = DynamoDb::default().start().await?;
-    let port = container.get_host_port_ipv4(8000).await?;
+/// One DynamoDB Local container shared across all tests in this binary.
+/// Lives in a dedicated background thread so it's never accidentally dropped.
+static DYNAMO_PORT: OnceLock<u16> = OnceLock::new();
+
+fn get_dynamo_port() -> u16 {
+    *DYNAMO_PORT.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async move {
+                let container = DynamoDb::default().start().await.unwrap();
+                let port = container.get_host_port_ipv4(8000).await.unwrap();
+                tx.send(port).unwrap();
+                // Hold the container alive until the process exits.
+                std::future::pending::<()>().await;
+            });
+        });
+        rx.recv().unwrap()
+    })
+}
+
+/// Sets up a uniquely-named table in the shared DynamoDB Local container.
+/// Each call produces an isolated table, so tests can run in parallel safely.
+pub async fn setup_dynamodb(table_type: TableType) -> Result<(DynamoClient, String)> {
+    // Initialise (or reuse) the shared container on a blocking thread so we
+    // don't stall the async executor during the one-time Docker startup.
+    let port = tokio::task::spawn_blocking(get_dynamo_port).await?;
     let endpoint = format!("http://127.0.0.1:{}", port);
 
     let config = aws_config::defaults(BehaviorVersion::latest())
@@ -36,12 +59,14 @@ pub async fn setup_dynamodb(
 
     let client = DynamoClient::new(&config);
 
-    let (table_name, ttl_attribute) = match table_type {
-        TableType::Lock => ("test-locks".to_string(), "expires_at"),
-        TableType::Destination => ("test-destinations".to_string(), "ttl"),
+    let (table_prefix, ttl_attribute) = match table_type {
+        TableType::Lock => ("test-locks", "expires_at"),
+        TableType::Destination => ("test-destinations", "ttl"),
     };
 
-    // Create table with common schema (pk hash key)
+    // Unique name so parallel tests never share state.
+    let table_name = format!("{}-{}", table_prefix, Uuid::new_v4());
+
     client
         .create_table()
         .table_name(&table_name)
@@ -61,7 +86,6 @@ pub async fn setup_dynamodb(
         .send()
         .await?;
 
-    // Enable TTL with the appropriate attribute name
     client
         .update_time_to_live()
         .table_name(&table_name)
@@ -74,5 +98,5 @@ pub async fn setup_dynamodb(
         .send()
         .await?;
 
-    Ok((container, client, table_name))
+    Ok((client, table_name))
 }

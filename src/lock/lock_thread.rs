@@ -42,7 +42,9 @@ impl LockThread {
             }
             // Acquire the lock for a specific duration
             let lock =
-                match Lock::acquire(self.dynamo.clone(), self.lock_duration, self.table.clone()).await {
+                match Lock::acquire(self.dynamo.clone(), self.lock_duration, self.table.clone())
+                    .await
+                {
                     Ok(lock) => lock,
                     Err(err) => {
                         warn!("Error acquiring lock (will retry): {:?}", err);

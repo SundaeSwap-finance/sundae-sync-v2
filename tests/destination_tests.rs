@@ -49,7 +49,7 @@ fn make_point(index: u64) -> BlockRef {
 
 #[tokio::test]
 async fn test_destination_commit_succeeds_on_correct_sequence() -> Result<()> {
-    let (_container, dynamo, table) =
+    let (dynamo, table) =
         common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
@@ -72,7 +72,7 @@ async fn test_destination_commit_succeeds_on_correct_sequence() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_commit_prevents_split_brain() -> Result<()> {
-    let (_container, dynamo, table) =
+    let (dynamo, table) =
         common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest1 = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
@@ -129,7 +129,7 @@ async fn test_destination_commit_prevents_split_brain() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_commit_detects_zombie_worker() -> Result<()> {
-    let (_container, dynamo, table) =
+    let (dynamo, table) =
         common::setup_dynamodb(common::TableType::Destination).await?;
 
     // Current worker at point 100
@@ -188,7 +188,7 @@ async fn test_destination_commit_detects_zombie_worker() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_recovery_points_rotation() -> Result<()> {
-    let (_container, dynamo, table) =
+    let (dynamo, table) =
         common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
@@ -218,7 +218,7 @@ async fn test_destination_recovery_points_rotation() -> Result<()> {
 
 #[tokio::test]
 async fn test_concurrent_destination_commits() -> Result<()> {
-    let (_container, dynamo, table) =
+    let (dynamo, table) =
         common::setup_dynamodb(common::TableType::Destination).await?;
 
     let _initial = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
@@ -284,7 +284,7 @@ async fn test_concurrent_destination_commits() -> Result<()> {
     if let AttributeValue::S(point_str) = last_point {
         let index: u64 = point_str.split('/').next().unwrap().parse()?;
         assert!(
-            index >= 101 && index <= 110,
+            (101..=110).contains(&index),
             "Final point should be 101-110, got {}",
             index
         );
@@ -297,7 +297,7 @@ async fn test_concurrent_destination_commits() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_commit_updates_sequence_number() -> Result<()> {
-    let (_container, dynamo, table) =
+    let (dynamo, table) =
         common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
@@ -323,7 +323,7 @@ async fn test_destination_commit_updates_sequence_number() -> Result<()> {
 
 #[tokio::test]
 async fn test_destination_commit_adds_to_recovery_points() -> Result<()> {
-    let (_container, dynamo, table) =
+    let (dynamo, table) =
         common::setup_dynamodb(common::TableType::Destination).await?;
 
     let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
