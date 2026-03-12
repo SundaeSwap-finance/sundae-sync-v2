@@ -9,18 +9,22 @@ Mappings:
   Env:
     preview:
       Image: 'ami-0d9f51894610e8834'
+      InstanceType: t2.large
       SubnetA: subnet-08fe76b5c6dc035d0
       SubnetB: subnet-0797a471ba5029682
     preprod:
       Image: 'ami-0d9f51894610e8834'
+      InstanceType: t2.medium
       SubnetA: subnet-08fe76b5c6dc035d0
       SubnetB: subnet-0797a471ba5029682
     mainnet:
       Image: 'ami-0189fd164c79c987a'
+      InstanceType: t2.large
       SubnetA: subnet-00b61ede02fae91f3
       SubnetB: subnet-0556e5d304dc5e443
     cardano-tom:
       Image: 'ami-01e5855db5558048c'
+      InstanceType: t2.large
       SubnetA: subnet-043cc56533b840171
       SubnetB: subnet-069b2d28c03bbeaa1
 
@@ -212,7 +216,7 @@ Resources:
             DisableApiTermination: true
             IamInstanceProfile: !Ref KinesisRoleInstanceProfile
             ImageId: !FindInMap [Env, !Ref Env, Image]
-            InstanceType: t2.medium
+            InstanceType: !FindInMap [Env, !Ref Env, InstanceType]
             KeyName: pi
             PrivateDnsNameOptions:
                 HostnameType: resource-name
@@ -238,7 +242,7 @@ Resources:
             DisableApiTermination: true
             IamInstanceProfile: !Ref KinesisRoleInstanceProfile
             ImageId: !FindInMap [Env, !Ref Env, Image]
-            InstanceType: t2.medium
+            InstanceType: !FindInMap [Env, !Ref Env, InstanceType]
             KeyName: pi
             PrivateDnsNameOptions:
                 HostnameType: resource-name
