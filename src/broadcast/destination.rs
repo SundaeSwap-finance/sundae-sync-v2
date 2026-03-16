@@ -82,16 +82,19 @@ impl Destination {
                 // has taken over (normal during failover)
                 if let Some(service_err) = e.as_service_error() {
                     if service_err.is_conditional_check_failed_exception() {
-                        return anyhow::anyhow!(
+                        anyhow::anyhow!(
                             "Another worker has updated destination {} (likely failover occurred). \
                              Expected point: {}, but destination has advanced. \
                              This is normal behavior when a new worker takes over the lock.",
                             self.pk,
                             point_to_string(&previous_point)
-                        );
+                        )
+                    } else {
+                        anyhow::anyhow!("failed to update destination {}: {}", self.pk, service_err)
                     }
+                } else {
+                    anyhow::anyhow!("failed to update destination {}: {}", self.pk, e)
                 }
-                anyhow::anyhow!("failed to update destination {}: {}", self.pk, e)
             })?;
         Ok(())
     }
