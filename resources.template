@@ -24,7 +24,7 @@ Mappings:
       SubnetB: subnet-0556e5d304dc5e443
     cardano-tom:
       Image: 'ami-01e5855db5558048c'
-      InstanceType: t2.medium
+      InstanceType: t2.large
       SubnetA: subnet-043cc56533b840171
       SubnetB: subnet-069b2d28c03bbeaa1
 
