@@ -23,13 +23,60 @@ type Script struct {
 }
 
 type Asset struct {
-	Name       string `dynamodbav:"name"` // base64 encoded token name
-	OutputCoin string `dynamodbav:"output_coin"`
+	Name       string // base64 encoded token name
+	OutputCoin string // primary key "output_coin", legacy key "outputCoin"
+}
+
+// UnmarshalDynamoDBAttributeValue accepts both the current Rust writer format
+// (serde default, snake_case: "output_coin") and the legacy camelCase format
+// ("outputCoin") that still exists in older records on long-lived environments
+// like mainnet.
+func (a *Asset) UnmarshalDynamoDBAttributeValue(item *dynamodb.AttributeValue) error {
+	if item == nil || item.M == nil {
+		return nil
+	}
+	if n, ok := item.M["name"]; ok && n.S != nil {
+		a.Name = *n.S
+	}
+	key := "output_coin"
+	if _, ok := item.M[key]; !ok {
+		key = "outputCoin"
+	}
+	if v, ok := item.M[key]; ok && v.S != nil {
+		a.OutputCoin = *v.S
+	}
+	return nil
 }
 
 type Policy struct {
-	PolicyID string  `dynamodbav:"policy_id"` // base64 encoded
-	Assets   []Asset `dynamodbav:"assets"`
+	PolicyID string // base64 encoded; primary key "policy_id", legacy "policyId"
+	Assets   []Asset
+}
+
+// UnmarshalDynamoDBAttributeValue accepts both "policy_id" (current) and
+// "policyId" (legacy). See Asset.UnmarshalDynamoDBAttributeValue.
+func (p *Policy) UnmarshalDynamoDBAttributeValue(item *dynamodb.AttributeValue) error {
+	if item == nil || item.M == nil {
+		return nil
+	}
+	key := "policy_id"
+	if _, ok := item.M[key]; !ok {
+		key = "policyId"
+	}
+	if v, ok := item.M[key]; ok && v.S != nil {
+		p.PolicyID = *v.S
+	}
+	if assets, ok := item.M["assets"]; ok && assets.L != nil {
+		p.Assets = make([]Asset, 0, len(assets.L))
+		for _, el := range assets.L {
+			var a Asset
+			if err := a.UnmarshalDynamoDBAttributeValue(el); err != nil {
+				return err
+			}
+			p.Assets = append(p.Assets, a)
+		}
+	}
+	return nil
 }
 
 type UTxO struct {
