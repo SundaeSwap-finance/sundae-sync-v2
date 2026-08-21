@@ -266,18 +266,6 @@ where
     }
     s.end()
 }
-pub fn serialize_option_point<S>(
-    point: &Option<BlockRef>,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    match point {
-        Some(point) => serializer.serialize_some(point_to_string(point).as_str()),
-        None => serializer.serialize_none(),
-    }
-}
 
 pub fn string_to_point(s: String) -> Result<BlockRef> {
     let parts: Vec<_> = s.split('/').collect();
@@ -316,19 +304,6 @@ where
                 })
             })
             .collect()
-    })
-}
-pub fn deserialize_option_point<'de, D>(
-    deserializer: D,
-) -> std::result::Result<Option<BlockRef>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Option::<String>::deserialize(deserializer).and_then(|opt_string| match opt_string {
-        Some(s) => string_to_point(s).map(Some).map_err(|err| {
-            serde::de::Error::custom(format!("failed to deserialize point: {}", err))
-        }),
-        None => Ok(None),
     })
 }
 
