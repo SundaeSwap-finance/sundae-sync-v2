@@ -110,6 +110,7 @@ impl Broadcaster {
                         &self.table,
                         message.advance.clone(),
                         Some(result.sequence_number),
+                        true,
                     )
                     .await
                     .context(format!("failed committing destination {}", destination.pk))?;
@@ -125,6 +126,7 @@ impl Broadcaster {
                         &self.table,
                         message.advance.clone(),
                         destination.sequence_number.clone(),
+                        false,
                     )
                     .await
                     .context(format!(

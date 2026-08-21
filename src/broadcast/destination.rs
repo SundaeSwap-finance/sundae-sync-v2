@@ -27,6 +27,12 @@ pub struct Destination {
         deserialize_with = "deserialize_points"
     )]
     pub recovery_points: Vec<BlockRef>,
+    #[serde(
+        serialize_with = "serialize_points",
+        deserialize_with = "deserialize_points",
+        default
+    )]
+    pub published_points: Vec<BlockRef>,
     pub enabled: bool,
     #[serde(default)]
     pub skip_repair: bool,
@@ -40,6 +46,7 @@ impl Destination {
         table: &String,
         point: BlockRef,
         seq_num: Option<String>,
+        published: bool,
     ) -> Result<()> {
         // Rotate the point into the list of 15 rollback points
         // TODO: make this more sophisticated, so that we stagger points further and further back
@@ -51,8 +58,26 @@ impl Destination {
         if self.recovery_points.len() > 15 {
             self.recovery_points.remove(0);
         }
+        if published {
+            while self
+                .published_points
+                .last()
+                .is_some_and(|p| p.height >= point.height)
+            {
+                self.published_points.pop();
+            }
+            self.published_points.push(point.clone());
+            if self.published_points.len() > 15 {
+                self.published_points.remove(0);
+            }
+        }
         let recovery_points = self
             .recovery_points
+            .iter()
+            .map(|p| AttributeValue::S(point_to_string(p)))
+            .collect();
+        let published_points = self
+            .published_points
             .iter()
             .map(|p| AttributeValue::S(point_to_string(p)))
             .collect();
@@ -66,7 +91,7 @@ impl Destination {
             .key("pk", AttributeValue::S(self.pk.clone()))
             .condition_expression("last_seen_point = :last_point")
             .update_expression(
-                "SET last_seen_point = :new_point, sequence_number = :seq, recovery_points = :rotated_points",
+                "SET last_seen_point = :new_point, sequence_number = :seq, recovery_points = :rotated_points, published_points = :published_points",
             )
             .expression_attribute_values(
                 ":last_point",
@@ -75,6 +100,7 @@ impl Destination {
             .expression_attribute_values(":seq", seq_num.map_or(AttributeValue::Null(true), AttributeValue::S))
             .expression_attribute_values(":new_point", AttributeValue::S(point_to_string(&point)))
             .expression_attribute_values(":rotated_points", AttributeValue::L(recovery_points))
+            .expression_attribute_values(":published_points", AttributeValue::L(published_points))
             .send()
             .await
             .map_err(|e| {
@@ -175,7 +201,7 @@ impl Destination {
 
                 // Try to commit with conditional check - this prevents zombie worker races
                 match self
-                    .commit(&dynamo, &table, point.clone(), Some(seq_no))
+                    .commit(&dynamo, &table, point.clone(), Some(seq_no), true)
                     .await
                 {
                     Ok(_) => {
@@ -240,6 +266,18 @@ where
     }
     s.end()
 }
+pub fn serialize_option_point<S>(
+    point: &Option<BlockRef>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match point {
+        Some(point) => serializer.serialize_some(point_to_string(point).as_str()),
+        None => serializer.serialize_none(),
+    }
+}
 
 pub fn string_to_point(s: String) -> Result<BlockRef> {
     let parts: Vec<_> = s.split('/').collect();
@@ -278,6 +316,19 @@ where
                 })
             })
             .collect()
+    })
+}
+pub fn deserialize_option_point<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<BlockRef>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).and_then(|opt_string| match opt_string {
+        Some(s) => string_to_point(s).map(Some).map_err(|err| {
+            serde::de::Error::custom(format!("failed to deserialize point: {}", err))
+        }),
+        None => Ok(None),
     })
 }
 
@@ -355,6 +406,20 @@ mod tests {
                 timestamp: 0,
             },
             recovery_points: vec![
+                BlockRef {
+                    slot: 90,
+                    hash: bytes::Bytes::from(vec![0x11, 0x22, 0x33, 0x44]),
+                    height: 0,
+                    timestamp: 0,
+                },
+                BlockRef {
+                    slot: 95,
+                    hash: bytes::Bytes::from(vec![0x55, 0x66, 0x77, 0x88]),
+                    height: 0,
+                    timestamp: 0,
+                },
+            ],
+            published_points: vec![
                 BlockRef {
                     slot: 90,
                     hash: bytes::Bytes::from(vec![0x11, 0x22, 0x33, 0x44]),
