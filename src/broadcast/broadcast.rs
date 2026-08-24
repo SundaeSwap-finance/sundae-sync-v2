@@ -126,7 +126,7 @@ impl Broadcaster {
             let matches_filter = destination
                 .filter
                 .as_ref()
-                .is_some_and(|f| f.applies_block(&block));
+                .is_none_or(|f| f.applies_block(&block));
 
             let broadcast_message = match Self::next_action(destination, &message, matches_filter) {
                 BroadcastAction::BroadcastAndCommit(message) => Some(message),

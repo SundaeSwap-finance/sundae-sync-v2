@@ -386,10 +386,10 @@ async fn test_destination_commit_updates_published_points() -> Result<()> {
     )
     .await?;
 
-    // Recovery points should have grown by 1
+    // published points should have grown by 1
     assert_eq!(dest.published_points.len(), initial_published_count + 1);
 
-    // Last recovery point should be the newly committed point
+    // Last published point should be the newly committed point
     assert_eq!(dest.published_points.last().unwrap().slot, 101);
 
     Ok(())
@@ -422,10 +422,10 @@ async fn test_destination_commit_tracks_rollbacks() -> Result<()> {
     )
     .await?;
 
-    // Recovery points should have grown by 1
+    // Published points should have grown by 1
     assert_eq!(dest.published_points.len(), initial_published_count);
 
-    // Last recovery point should be the newly committed point
+    // Last published point should be the newly committed point
     assert_eq!(dest.published_points.last().unwrap().slot, 101);
 
     Ok(())

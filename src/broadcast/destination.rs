@@ -62,7 +62,7 @@ impl Destination {
             while self
                 .published_points
                 .last()
-                .is_some_and(|p| p.height >= point.height)
+                .is_some_and(|p| p.slot >= point.slot)
             {
                 self.published_points.pop();
             }
