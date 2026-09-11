@@ -6,7 +6,7 @@ use aws_sdk_dynamodb::{
     Client as DynamoClient,
 };
 use aws_sdk_s3::Client as S3Client;
-use futures::future::try_join_all;
+use futures::{stream, StreamExt, TryStreamExt};
 use hex::ToHex;
 use pallas::interop::utxorpc::{LedgerContext, Mapper};
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,10 @@ use tracing::trace;
 use utxorpc::spec::cardano::{asset::Quantity, Block, Datum as utxorpcDatum, Redeemer, Script};
 
 use crate::utils::{bigint_to_string, bigint_to_u64, elapsed};
+
+// Large blocks can contain thousands of transactions. Bound in-flight writes
+// so archiving a block doesn't exhaust the process's file descriptors.
+const MAX_CONCURRENT_POINTER_WRITES: usize = 32;
 
 #[derive(Clone)]
 pub struct Archive {
@@ -191,7 +195,9 @@ impl Archive {
             );
         }
 
-        try_join_all(tasks)
+        stream::iter(tasks)
+            .buffer_unordered(MAX_CONCURRENT_POINTER_WRITES)
+            .try_for_each(|_| async { Ok(()) })
             .await
             .context("failed to save pointers to dynamodb")?;
         trace!("Finished saving block (elapsed={:?})", elapsed(start));
