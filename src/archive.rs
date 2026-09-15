@@ -215,9 +215,10 @@ impl Archive {
 
     pub async fn unsave(&self, block: &Block) -> Result<()> {
         let block = block.body.clone().context("expected block body")?;
-        if !block.tx.is_empty() {
+        // DynamoDB allows at most 100 actions per transaction.
+        for chunk in block.tx.chunks(100) {
             let mut ddb_tx = self.dynamo.transact_write_items();
-            for tx in block.tx {
+            for tx in chunk {
                 let tx_update = Update::builder()
                     .table_name(self.table_name.clone())
                     .key(
