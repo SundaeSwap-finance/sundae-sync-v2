@@ -37,6 +37,9 @@ serde_bytes = "0.11.15"
 serde_bytes_base64 = "0.1.1"
 
 [dev-dependencies]
+aws-smithy-http-client = { version = "1.1.11", features = ["test-util"] }
+aws-smithy-types = "1.4.5"
+http = "1"
 testcontainers = "0.26.0"
 testcontainers-modules = { version = "0.14.0", features = ["dynamodb"] }
 
