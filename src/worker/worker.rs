@@ -10,7 +10,7 @@ use utxorpc::spec::sync::BlockRef;
 use super::Follower;
 use crate::{
     archive::Archive,
-    broadcast::{BroadcastMessage, Broadcaster},
+    broadcast::{should_clear_undo_stack, BroadcastMessage, Broadcaster},
     utils::elapsed,
 };
 use anyhow::{bail, Context, Result};
@@ -102,7 +102,15 @@ impl Worker {
                             advance: point.clone(),
                         }).await.context(format!("failed to broadcast point {}/{}", point.slot, block_hash))?;
                         trace!("Message broadcast (elapsed={:?})", SystemTime::now().duration_since(start)?);
-                        undo_stack.clear();
+                        if should_clear_undo_stack(&destinations) {
+                            undo_stack.clear();
+                        } else if !undo_stack.is_empty() {
+                            warn!(
+                                slot = point.slot,
+                                undo_count = undo_stack.len(),
+                                "broadcast wrote to no destinations; keeping undo stack"
+                            );
+                        }
                         info!("Roll forward {}/{} ({})", point.slot, block_hash, destinations.join(", "));
                     } else {
                         trace!("Unsaving {}/{}", point.slot, block_hash);
