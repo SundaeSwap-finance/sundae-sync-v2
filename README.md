@@ -5,7 +5,7 @@
 
 A robust, production-ready Cardano blockchain indexer with UtxoRPC support, automatic failover, and flexible event filtering.
 
-This is a ground-up rewrite of [sundae-sync](https://github.com/SundaeSwap-finance/sundae-sync), designed for high availability and efficient resource utilization.
+This is a ground-up rewrite of [sundae-sync](https://github.com/SundaeSwap-finance/sundae-sync-v2), designed for high availability and efficient resource utilization.
 
 ## Features
 
