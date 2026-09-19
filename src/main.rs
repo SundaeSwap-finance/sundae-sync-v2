@@ -2,6 +2,7 @@ pub mod archive;
 pub mod args;
 pub mod broadcast;
 pub mod lock;
+pub mod metrics;
 pub mod utils;
 pub mod worker;
 
@@ -44,6 +45,7 @@ async fn main() -> Result<()> {
     let s3_client = S3Client::new(&config);
     let dynamo_client = DynamoClient::new(&config);
     let kinesis_client = KinesisClient::new(&config);
+    let cloudwatch_client = aws_sdk_cloudwatch::Client::new(&config);
 
     {
         // Cancel our worker thread once we receive a Ctrl+C
@@ -77,6 +79,7 @@ async fn main() -> Result<()> {
         let worker = Worker {
             dynamo: dynamo_client.clone(),
             kinesis: kinesis_client.clone(),
+            cloudwatch: cloudwatch_client,
             uri: args.utxo_rpc_url.unwrap(),
             api_key: args.utxo_rpc_api_key,
             table: args.destination_table,

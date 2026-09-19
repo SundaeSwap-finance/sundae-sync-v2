@@ -22,6 +22,7 @@ aws-config = "1.5.4"
 aws-sdk-dynamodb = "1.38.0"
 aws-sdk-s3 = "1.41.0"
 aws-sdk-kinesis = "1.35.0"
+aws-sdk-cloudwatch = "1.40.0"
 serde = "1.0.204"
 serde_json = "1.0.120"
 uuid = { version = "1.10.0", features = ["v4", "fast-rng"] }
