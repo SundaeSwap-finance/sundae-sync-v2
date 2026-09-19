@@ -11,6 +11,26 @@ use utxorpc::spec::{cardano::Block, sync::BlockRef};
 
 use super::Destination;
 
+/// What one broadcast did: which destinations received the message, and
+/// whether it moved any destination's cursor forward at all.
+pub struct Broadcast {
+    pub published_to: Vec<String>,
+    pub advanced: bool,
+}
+
+/// Whether a block at `advance_slot` moves a destination whose cursor sits at
+/// `cursor_slot`.
+///
+/// The follower re-delivers the intersect block itself after every restart —
+/// the block the cursor already names. Publishing it again is a duplicate for
+/// every consumer, and when the upstream node is stuck it is the ONLY thing
+/// the producer ever publishes: on 2026-09-16 preprod re-emitted one block
+/// every ~35s for three days, which kept the stream's idle alarm quiet while
+/// nothing advanced. Equal is not an advance.
+pub fn advances(cursor_slot: u64, advance_slot: u64) -> bool {
+    advance_slot > cursor_slot
+}
+
 pub struct Broadcaster {
     pub destinations: Vec<Destination>,
     pub kinesis: KinesisClient,
@@ -59,13 +79,16 @@ impl Broadcaster {
         &mut self,
         block: Block,
         message: BroadcastMessage,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Broadcast> {
         let message_bytes = serde_json::to_vec(&message)?;
         let mut destinations = vec![];
+        let advanced = self
+            .destinations
+            .iter()
+            .any(|d| advances(d.last_seen_point.slot, message.advance.slot));
         // For each destination
         for destination in &mut self.destinations {
-            // Ignore this destination if we're further back in the chain
-            if destination.last_seen_point.slot > message.advance.slot {
+            if !advances(destination.last_seen_point.slot, message.advance.slot) {
                 continue;
             }
             // Check if we *should* send to this destination,
@@ -133,7 +156,10 @@ impl Broadcaster {
                     ))?;
             }
         }
-        Ok(destinations)
+        Ok(Broadcast {
+            published_to: destinations,
+            advanced,
+        })
     }
 
     pub async fn repair(&mut self) -> Result<()> {
@@ -147,5 +173,23 @@ impl Broadcaster {
                 .await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::advances;
+
+    #[test]
+    fn a_block_ahead_of_the_cursor_advances_it() {
+        assert!(advances(100, 101));
+        assert!(advances(0, 1));
+    }
+
+    #[test]
+    fn the_intersect_block_and_anything_behind_it_do_not() {
+        // The intersect block re-delivered on restart sits exactly at the cursor.
+        assert!(!advances(133_902_215, 133_902_215));
+        assert!(!advances(100, 99));
     }
 }

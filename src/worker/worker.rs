@@ -11,6 +11,7 @@ use super::Follower;
 use crate::{
     archive::Archive,
     broadcast::{BroadcastMessage, Broadcaster},
+    metrics::Metrics,
     utils::elapsed,
 };
 use anyhow::{bail, Context, Result};
@@ -18,6 +19,7 @@ use anyhow::{bail, Context, Result};
 pub struct Worker {
     pub dynamo: DynamoClient,
     pub kinesis: KinesisClient,
+    pub cloudwatch: aws_sdk_cloudwatch::Client,
     pub archive: Archive,
     pub table: String,
     pub uri: String,
@@ -75,12 +77,23 @@ impl Worker {
             .context("failed to start follower")?;
 
         let mut undo_stack = vec![];
+        let mut metrics = Metrics {
+            client: self.cloudwatch.clone(),
+            table: self.table.clone(),
+            counter: Default::default(),
+        };
+        let mut flush = tokio::time::interval(Duration::from_secs(60));
+        flush.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        flush.tick().await; // the first tick fires at once; skip it
 
         loop {
             select! {
                 _ = sleep(Duration::from_secs(5 * 60)) => {
                     warn!("No block in 5 minutes, failing over to another node");
                     bail!("No block in 5 minutes, failing over to another node");
+                },
+                _ = flush.tick() => {
+                    metrics.flush().await;
                 },
                 result = follower.next_event() => {
                     let (is_roll_forward, bytes, block, header) = result.context("failed to receive next event from follower")?;
@@ -97,13 +110,18 @@ impl Worker {
                         self.archive.save(&block, bytes.to_vec()).await.context(format!("failed to archive {}/{}", point.slot, block_hash))?;
 
                         let start = SystemTime::now();
-                        let destinations = broadcaster.broadcast(block, BroadcastMessage {
+                        let broadcast = broadcaster.broadcast(block, BroadcastMessage {
                             undo: undo_stack.clone(),
                             advance: point.clone(),
                         }).await.context(format!("failed to broadcast point {}/{}", point.slot, block_hash))?;
                         trace!("Message broadcast (elapsed={:?})", SystemTime::now().duration_since(start)?);
                         undo_stack.clear();
-                        info!("Roll forward {}/{} ({})", point.slot, block_hash, destinations.join(", "));
+                        metrics.counter.record(broadcast.advanced);
+                        if broadcast.advanced {
+                            info!("Roll forward {}/{} ({})", point.slot, block_hash, broadcast.published_to.join(", "));
+                        } else {
+                            info!("Already past {}/{}; not re-publishing", point.slot, block_hash);
+                        }
                     } else {
                         trace!("Unsaving {}/{}", point.slot, block_hash);
                         self.archive.unsave(&block).await.context(format!("failed to unsave point {}/{}", point.slot, block_hash))?;
