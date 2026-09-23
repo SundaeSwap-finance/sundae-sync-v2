@@ -60,6 +60,13 @@ This creates:
 - S3 bucket for block archiving
 - Kinesis streams for event replication
 
+Existing deployments must also grant `dynamodb:BatchWriteItem` on the lookup table
+before running this version. The CloudFormation template includes that permission.
+Pointer writes use batches of up to 25 items with at most four requests in flight.
+Unprocessed items are retried with exponential backoff and jitter; exhausting the
+retry limit fails the block before it is broadcast. A retry of the block overwrites
+the same pointer keys and values. Writes are not atomic across the whole block.
+
 ### Configuration
 
 Configure via environment variables or command-line arguments:

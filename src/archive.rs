@@ -1,8 +1,8 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use aws_sdk_dynamodb::{
-    types::{TransactWriteItem, Update},
+    types::{PutRequest, TransactWriteItem, Update, WriteRequest},
     Client as DynamoClient,
 };
 use aws_sdk_s3::Client as S3Client;
@@ -12,14 +12,48 @@ use pallas::interop::utxorpc::{LedgerContext, Mapper};
 use serde::{Deserialize, Serialize};
 use serde_bytes_base64::Bytes;
 use serde_dynamo::{to_attribute_value, to_item};
-use tracing::trace;
+use tracing::{trace, warn};
 use utxorpc::spec::cardano::{asset::Quantity, Block, Datum as utxorpcDatum, Redeemer, Script};
 
 use crate::utils::{bigint_to_string, bigint_to_u64, elapsed};
 
-// Large blocks can contain thousands of transactions. Bound in-flight writes
-// so archiving a block doesn't exhaust the process's file descriptors.
-const MAX_CONCURRENT_POINTER_WRITES: usize = 32;
+// Keep both request count and payload size bounded for large blocks.
+const MAX_CONCURRENT_POINTER_BATCHES: usize = 4;
+const MAX_POINTER_BATCH_ITEMS: usize = 25;
+// DynamoDB permits 16 MiB per request. Reserve room for the request envelope
+// and differences between the SDK and serde_json string escaping.
+const MAX_POINTER_BATCH_BYTES: usize = 15 * 1024 * 1024;
+const MAX_UNPROCESSED_RETRIES: u32 = 8;
+
+fn pointer_batches(items: Vec<serde_dynamo::Item>) -> Result<Vec<Vec<WriteRequest>>> {
+    let mut batches = Vec::new();
+    let mut batch = Vec::new();
+    let mut batch_bytes = 0;
+    for item in items {
+        let bytes = serde_json::to_vec(&item)?.len() + 32; // PutRequest/Item envelope
+        if !batch.is_empty()
+            && (batch.len() == MAX_POINTER_BATCH_ITEMS
+                || batch_bytes + bytes > MAX_POINTER_BATCH_BYTES)
+        {
+            batches.push(std::mem::take(&mut batch));
+            batch_bytes = 0;
+        }
+        anyhow::ensure!(
+            bytes <= MAX_POINTER_BATCH_BYTES,
+            "pointer exceeds batch request size limit"
+        );
+        batch.push(
+            WriteRequest::builder()
+                .put_request(PutRequest::builder().set_item(Some(item.into())).build()?)
+                .build(),
+        );
+        batch_bytes += bytes;
+    }
+    if !batch.is_empty() {
+        batches.push(batch);
+    }
+    Ok(batches)
+}
 
 #[derive(Clone)]
 pub struct Archive {
@@ -155,20 +189,14 @@ impl Archive {
 
         // Then, save various lookups in dynamodb
         let location = block_hash_key(&header.hash);
-        let mut tasks = vec![];
+        let mut items = vec![];
         let height_ref = HeightRef {
             pk: format!("height:{}", header.height),
             sk: "height".to_string(),
             hash: header.hash.encode_hex(),
             location: location.clone(),
         };
-        tasks.push(
-            self.dynamo
-                .put_item()
-                .table_name(self.table_name.clone())
-                .set_item(Some(to_item(height_ref)?))
-                .send(),
-        );
+        items.push(to_item(height_ref)?);
         let body = block
             .body
             .clone()
@@ -186,22 +214,58 @@ impl Archive {
                     .collateral
                     .and_then(|c| c.collateral_return.map(|o| o.into())),
             };
-            tasks.push(
-                self.dynamo
-                    .put_item()
-                    .table_name(self.table_name.clone())
-                    .set_item(Some(to_item(tx_ref)?))
-                    .send(),
-            );
+            items.push(to_item(tx_ref)?);
         }
 
-        stream::iter(tasks)
-            .buffer_unordered(MAX_CONCURRENT_POINTER_WRITES)
-            .try_for_each(|_| async { Ok(()) })
-            .await
-            .context("failed to save pointers to dynamodb")?;
+        let batches = pointer_batches(items)?;
+        stream::iter(
+            batches
+                .into_iter()
+                .map(|batch| self.save_pointer_batch(batch)),
+        )
+        .buffer_unordered(MAX_CONCURRENT_POINTER_BATCHES)
+        .try_for_each(|_| async { Ok(()) })
+        .await
+        .context("failed to save pointers to dynamodb")?;
         trace!("Finished saving block (elapsed={:?})", elapsed(start));
         Ok(())
+    }
+
+    async fn save_pointer_batch(&self, mut pending: Vec<WriteRequest>) -> Result<()> {
+        for retry in 0..=MAX_UNPROCESSED_RETRIES {
+            let mut response = self
+                .dynamo
+                .batch_write_item()
+                .request_items(&self.table_name, pending)
+                .send()
+                .await?;
+            // HTTP 200 can still mean only part of the batch was written.
+            pending = response
+                .unprocessed_items
+                .take()
+                .and_then(|mut tables| tables.remove(&self.table_name))
+                .unwrap_or_default();
+            if pending.is_empty() {
+                return Ok(());
+            }
+            if retry == MAX_UNPROCESSED_RETRIES {
+                bail!(
+                    "{} pointers remain unprocessed after {} retries",
+                    pending.len(),
+                    retry
+                );
+            }
+            let cap_ms = (100_u64 << retry).min(5_000);
+            let delay_ms = cap_ms / 2 + (uuid::Uuid::new_v4().as_u128() as u64 % (cap_ms / 2 + 1));
+            warn!(
+                unprocessed_count = pending.len(),
+                retry = retry + 1,
+                delay_ms,
+                "Retrying unprocessed DynamoDB pointers"
+            );
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        }
+        unreachable!("final retry returns success or an error")
     }
 
     pub async fn read_by_hash(&self, hash: impl ToHex) -> Result<Block> {
@@ -257,5 +321,37 @@ impl Archive {
             .await?;
         trace!("Finished uploading block (elapsed={:?})", elapsed(start));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batches_account_for_json_expansion_as_well_as_item_count() {
+        // Each string is below DynamoDB's item limit, but JSON escaping makes
+        // eight items exceed the request limit despite being fewer than 25.
+        let items = (0..8)
+            .map(|i| {
+                to_item(serde_json::json!({
+                    "pk": format!("tx:{i}"), "sk": "tx", "payload": "\u{1}".repeat(350_000)
+                }))
+                .unwrap()
+            })
+            .collect();
+        let batches = pointer_batches(items).unwrap();
+        assert_eq!(batches.iter().map(Vec::len).collect::<Vec<_>>(), vec![7, 1]);
+        for batch in batches {
+            let writes: Vec<_> = batch
+                .into_iter()
+                .map(|r| {
+                    let item: serde_dynamo::Item = r.put_request.unwrap().item.into();
+                    serde_json::json!({"PutRequest":{"Item":item}})
+                })
+                .collect();
+            let request = serde_json::json!({"RequestItems":{"test-lookup":writes}});
+            assert!(serde_json::to_vec(&request).unwrap().len() < 16 * 1024 * 1024);
+        }
     }
 }
