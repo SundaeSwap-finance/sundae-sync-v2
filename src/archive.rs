@@ -1,8 +1,11 @@
-use std::time::SystemTime;
+use std::{
+    collections::HashSet,
+    time::{Duration, SystemTime},
+};
 
 use anyhow::{Context, Result};
 use aws_sdk_dynamodb::{
-    types::{TransactWriteItem, Update},
+    types::{PutRequest, TransactWriteItem, Update, WriteRequest},
     Client as DynamoClient,
 };
 use aws_sdk_s3::Client as S3Client;
@@ -17,9 +20,13 @@ use utxorpc::spec::cardano::{asset::Quantity, Block, Datum as utxorpcDatum, Rede
 
 use crate::utils::{bigint_to_string, bigint_to_u64, elapsed};
 
-// Large blocks can contain thousands of transactions. Bound in-flight writes
-// so archiving a block doesn't exhaust the process's file descriptors.
-const MAX_CONCURRENT_POINTER_WRITES: usize = 32;
+// Large blocks can contain thousands of transactions. Pointers are written
+// with BatchWriteItem (at most 25 items per request), and in-flight batches are
+// bounded so archiving a block doesn't exhaust the process's file descriptors.
+const BATCH_WRITE_MAX_ITEMS: usize = 25;
+const MAX_CONCURRENT_POINTER_WRITES: usize = 8;
+// Unprocessed items are retried with backoff; give up after this many rounds.
+const MAX_BATCH_WRITE_ATTEMPTS: u32 = 10;
 
 #[derive(Clone)]
 pub struct Archive {
@@ -155,25 +162,26 @@ impl Archive {
 
         // Then, save various lookups in dynamodb
         let location = block_hash_key(&header.hash);
-        let mut tasks = vec![];
+        let mut items = vec![];
         let height_ref = HeightRef {
             pk: format!("height:{}", header.height),
             sk: "height".to_string(),
             hash: header.hash.encode_hex(),
             location: location.clone(),
         };
-        tasks.push(
-            self.dynamo
-                .put_item()
-                .table_name(self.table_name.clone())
-                .set_item(Some(to_item(height_ref)?))
-                .send(),
-        );
+        items.push(to_item(height_ref)?);
         let body = block
             .body
             .clone()
             .context("expected block to have a body")?;
+        // Leios endorser blocks can carry the same transaction more than once,
+        // and BatchWriteItem refuses duplicate keys in one request. A repeated
+        // tx hash means an identical body, so the first pointer is kept.
+        let mut seen = HashSet::new();
         for tx in body.tx {
+            if !seen.insert(tx.hash.clone()) {
+                continue;
+            }
             let tx_ref = TxRef {
                 pk: format!("tx:{}", tx.hash.encode_hex::<String>()),
                 sk: "tx".to_string(),
@@ -186,16 +194,20 @@ impl Archive {
                     .collateral
                     .and_then(|c| c.collateral_return.map(|o| o.into())),
             };
-            tasks.push(
-                self.dynamo
-                    .put_item()
-                    .table_name(self.table_name.clone())
-                    .set_item(Some(to_item(tx_ref)?))
-                    .send(),
-            );
+            items.push(to_item(tx_ref)?);
         }
 
-        stream::iter(tasks)
+        let batches: Vec<Vec<WriteRequest>> = items
+            .into_iter()
+            .map(|item| {
+                let put = PutRequest::builder().set_item(Some(item)).build()?;
+                Ok(WriteRequest::builder().put_request(put).build())
+            })
+            .collect::<Result<Vec<_>>>()?
+            .chunks(BATCH_WRITE_MAX_ITEMS)
+            .map(|chunk| chunk.to_vec())
+            .collect();
+        stream::iter(batches.into_iter().map(|batch| self.batch_write(batch)))
             .buffer_unordered(MAX_CONCURRENT_POINTER_WRITES)
             .try_for_each(|_| async { Ok(()) })
             .await
@@ -242,6 +254,37 @@ impl Archive {
                 .send()
                 .await
                 .context("failed to mark txs as off-chain")?;
+        }
+        Ok(())
+    }
+
+    /// Writes up to 25 items with one BatchWriteItem, retrying any items
+    /// DynamoDB reports as unprocessed (throttling) with exponential backoff.
+    async fn batch_write(&self, mut requests: Vec<WriteRequest>) -> Result<()> {
+        let mut attempt = 0;
+        while !requests.is_empty() {
+            attempt += 1;
+            let output = self
+                .dynamo
+                .batch_write_item()
+                .request_items(self.table_name.clone(), requests)
+                .send()
+                .await?;
+            requests = output
+                .unprocessed_items
+                .and_then(|mut unprocessed| unprocessed.remove(&self.table_name))
+                .unwrap_or_default();
+            if requests.is_empty() {
+                break;
+            }
+            if attempt >= MAX_BATCH_WRITE_ATTEMPTS {
+                anyhow::bail!(
+                    "{} pointer writes still unprocessed after {} attempts",
+                    requests.len(),
+                    attempt
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(50 << attempt.min(6))).await;
         }
         Ok(())
     }
