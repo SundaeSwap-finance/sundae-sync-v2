@@ -41,7 +41,15 @@ async fn main() -> Result<()> {
         .region(region_provider)
         .load()
         .await;
-    let s3_client = S3Client::new(&config);
+    // LOCAL-ONLY, uncommitted workaround: LocalStack's localhost:4566 endpoint
+    // doesn't resolve virtual-hosted-style bucket subdomains (no wildcard DNS),
+    // which is the aws-sdk-s3 default and causes NoSuchBucket even when the
+    // bucket exists. Force path-style addressing to match LocalStack's routing.
+    let s3_client = S3Client::from_conf(
+        aws_sdk_s3::config::Builder::from(&config)
+            .force_path_style(true)
+            .build(),
+    );
     let dynamo_client = DynamoClient::new(&config);
     let kinesis_client = KinesisClient::new(&config);
 
