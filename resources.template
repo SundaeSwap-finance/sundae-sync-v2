@@ -154,6 +154,11 @@ Resources:
                           - !GetAtt LookupTable.Arn
                       - Effect: Allow
                         Action:
+                          - 'dynamodb:BatchWriteItem'
+                        Resource:
+                          - !GetAtt LookupTable.Arn
+                      - Effect: Allow
+                        Action:
                           - 's3:List*'
                           - 's3:Get*'
                           - 's3:PutObject'
