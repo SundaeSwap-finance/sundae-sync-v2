@@ -3575,7 +3575,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sundae-sync-v2"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -3592,7 +3592,7 @@ dependencies = [
  "http 1.4.0",
  "num-bigint",
  "pallas",
- "prost 0.14.3",
+ "prost 0.13.5",
  "rustls 0.23.36",
  "serde",
  "serde_bytes",
