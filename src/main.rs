@@ -41,13 +41,15 @@ async fn main() -> Result<()> {
         .region(region_provider)
         .load()
         .await;
-    // LOCAL-ONLY, uncommitted workaround: LocalStack's localhost:4566 endpoint
-    // doesn't resolve virtual-hosted-style bucket subdomains (no wildcard DNS),
-    // which is the aws-sdk-s3 default and causes NoSuchBucket even when the
-    // bucket exists. Force path-style addressing to match LocalStack's routing.
+    // Local S3 emulators (LocalStack, SeaweedFS) don't resolve virtual-hosted
+    // bucket subdomains, so force path-style addressing whenever an endpoint
+    // override is set. Real S3 (no override) keeps the SDK default.
+    let endpoint_override = ["AWS_ENDPOINT_URL_S3", "AWS_ENDPOINT_URL"]
+        .iter()
+        .any(|v| std::env::var(v).map(|s| !s.is_empty()).unwrap_or(false));
     let s3_client = S3Client::from_conf(
         aws_sdk_s3::config::Builder::from(&config)
-            .force_path_style(true)
+            .force_path_style(endpoint_override)
             .build(),
     );
     let dynamo_client = DynamoClient::new(&config);
