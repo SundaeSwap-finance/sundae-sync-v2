@@ -1,0 +1,50 @@
+# Deploys this branch to the musashi environment (AWS preview account, us-east-2) on
+# every push. It lives only on the musashi branch: GitHub runs a push workflow from the
+# pushed commit, so main is never involved.
+#
+# Skipped until the repository (or organization) variable MUSASHI_DEPLOY_ENABLED is
+# "true": turn it on per repo in the deploy order once the AWS side is ready.
+#
+# Needs, scoped to the GitHub environment "musashi":
+#   secrets.MUSASHI_DEPLOY_ROLE_ARN  IAM role trusting GitHub OIDC for this repo's
+#                                    refs/heads/musashi only
+#   (no build: the sync-v2 binary runs on the musashi-chain host)
+name: Musashi deploy
+
+on:
+  push:
+    branches: [musashi]
+
+concurrency:
+  group: musashi-deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    if: vars.MUSASHI_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: musashi
+    env:
+      AWS_REGION: us-east-2
+      STACK_NAME: musashi-sundae-sync-v2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${ secrets.MUSASHI_DEPLOY_ROLE_ARN }
+          aws-region: us-east-2
+
+      # Template only: on musashi the instances are off and sync-v2 runs on the chain host.
+      - name: Deploy
+        run: >-
+          aws cloudformation deploy
+          --stack-name "$STACK_NAME"
+          --template-file resources.template
+          --parameter-overrides Env=musashi
+          --capabilities CAPABILITY_NAMED_IAM
+          --no-fail-on-empty-changeset
