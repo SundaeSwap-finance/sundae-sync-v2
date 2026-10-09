@@ -36,7 +36,7 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${ secrets.MUSASHI_DEPLOY_ROLE_ARN }
+          role-to-assume: ${{ secrets.MUSASHI_DEPLOY_ROLE_ARN }}
           aws-region: us-east-2
 
       # Template only: on musashi the instances are off and sync-v2 runs on the chain host.
