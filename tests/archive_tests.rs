@@ -134,7 +134,12 @@ fn saved_batches(http: &StaticReplayClient) -> Vec<Vec<String>> {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|w| w["PutRequest"]["Item"]["pk"]["S"].as_str().unwrap().to_string())
+                .map(|w| {
+                    w["PutRequest"]["Item"]["pk"]["S"]
+                        .as_str()
+                        .unwrap()
+                        .to_string()
+                })
                 .collect()
         })
         .collect()
@@ -149,7 +154,10 @@ async fn save_batches_pointers_and_includes_every_transaction() {
     let hashes: Vec<u32> = (0..60).collect();
     // One S3 upload, then 61 pointers (height + 60 txs) in batches of 25, 25, 11.
     let (archive, http) = archive(&[200; 4]);
-    archive.save(&saved_block(&hashes), vec![1, 2, 3]).await.unwrap();
+    archive
+        .save(&saved_block(&hashes), vec![1, 2, 3])
+        .await
+        .unwrap();
 
     let batches = saved_batches(&http);
     let mut sizes: Vec<_> = batches.iter().map(Vec::len).collect();
@@ -168,9 +176,15 @@ async fn save_batches_pointers_and_includes_every_transaction() {
 async fn save_skips_repeated_transactions() {
     // Leios endorser blocks can repeat a transaction; one batch must not hold a key twice.
     let (archive, http) = archive(&[200; 2]);
-    archive.save(&saved_block(&[1, 2, 1]), vec![]).await.unwrap();
+    archive
+        .save(&saved_block(&[1, 2, 1]), vec![])
+        .await
+        .unwrap();
     let batches = saved_batches(&http);
-    assert_eq!(batches, vec![vec!["height:7".to_string(), tx_pk(1), tx_pk(2)]]);
+    assert_eq!(
+        batches,
+        vec![vec!["height:7".to_string(), tx_pk(1), tx_pk(2)]]
+    );
 }
 
 #[tokio::test]
@@ -181,7 +195,11 @@ async fn save_retries_unprocessed_pointers() {
         }}}]}
     })
     .to_string();
-    let responses = [(200, "{}".to_string()), (200, unprocessed), (200, "{}".to_string())];
+    let responses = [
+        (200, "{}".to_string()),
+        (200, unprocessed),
+        (200, "{}".to_string()),
+    ];
     let http = StaticReplayClient::new(
         responses
             .iter()
