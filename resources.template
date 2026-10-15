@@ -22,6 +22,14 @@ Mappings:
       InstanceType: t2.medium
       SubnetA: subnet-00b61ede02fae91f3
       SubnetB: subnet-0556e5d304dc5e443
+    musashi:
+      # Unused while HasInstances is false: on musashi, sync-v2 runs on the
+      # chain host next to the Leios node. A musashi AMI (Dolos built with the
+      # Leios fork and leios_peer_address) is needed before turning these on.
+      Image: 'ami-0d9f51894610e8834'
+      InstanceType: t2.medium
+      SubnetA: subnet-08fe76b5c6dc035d0
+      SubnetB: subnet-0797a471ba5029682
     cardano-tom:
       Image: 'ami-01e5855db5558048c'
       InstanceType: t2.medium
@@ -31,6 +39,8 @@ Mappings:
 Conditions:
   IsNotMainnet: !Not [!Equals [!Ref Env, 'mainnet']]
   HasAlerts: !Equals [!Ref Env, 'mainnet']
+  # musashi runs sync-v2 on its chain host for now (see the musashi mapping).
+  HasInstances: !Not [!Equals [!Ref Env, 'musashi']]
 
 Resources:
     ArchiveBucket:
@@ -204,6 +214,7 @@ Resources:
 
     SundaeSyncInstance2A:
         Type: 'AWS::EC2::Instance'
+        Condition: HasInstances
         DeletionPolicy: Retain
         UpdateReplacePolicy: Retain
         Properties:
@@ -230,6 +241,7 @@ Resources:
 
     SundaeSyncInstance2B:
         Type: 'AWS::EC2::Instance'
+        Condition: HasInstances
         DeletionPolicy: Retain
         UpdateReplacePolicy: Retain
         Properties:
