@@ -1,6 +1,7 @@
 use pallas::ledger::addresses::Address;
 use serde::{Deserialize, Serialize};
-use utxorpc::spec::cardano::{Block, Multiasset, Tx, TxOutput};
+use spec::cardano::{Block, Multiasset, Tx, TxOutput};
+use utxorpc_spec::utxorpc::v1beta as spec;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TokenFilter {
@@ -142,7 +143,6 @@ mod tests {
         let assets = vec![Multiasset {
             policy_id: policy_id.clone().into(),
             assets: vec![],
-            redeemer: None,
         }];
 
         assert!(filter.applies(&assets));
@@ -157,7 +157,6 @@ mod tests {
         let assets = vec![Multiasset {
             policy_id: vec![0xff, 0xee, 0xdd].into(),
             assets: vec![],
-            redeemer: None,
         }];
 
         assert!(!filter.applies(&assets));
@@ -174,13 +173,10 @@ mod tests {
 
         let assets = vec![Multiasset {
             policy_id: policy_id.clone().into(),
-            assets: vec![utxorpc::spec::cardano::Asset {
+            assets: vec![spec::cardano::Asset {
                 name: asset_name.clone().into(),
-                quantity: Some(utxorpc::spec::cardano::asset::Quantity::OutputCoin(
-                    u64_to_bigint(100),
-                )),
+                quantity: Some(u64_to_bigint(100)),
             }],
-            redeemer: None,
         }];
 
         assert!(filter.applies(&assets));
@@ -195,13 +191,10 @@ mod tests {
 
         let assets = vec![Multiasset {
             policy_id: vec![0xff, 0xee, 0xdd].into(),
-            assets: vec![utxorpc::spec::cardano::Asset {
+            assets: vec![spec::cardano::Asset {
                 name: vec![0x04, 0x05].into(),
-                quantity: Some(utxorpc::spec::cardano::asset::Quantity::OutputCoin(
-                    u64_to_bigint(100),
-                )),
+                quantity: Some(u64_to_bigint(100)),
             }],
-            redeemer: None,
         }];
 
         assert!(!filter.applies(&assets));
@@ -217,13 +210,10 @@ mod tests {
 
         let assets = vec![Multiasset {
             policy_id: policy_id.clone().into(),
-            assets: vec![utxorpc::spec::cardano::Asset {
+            assets: vec![spec::cardano::Asset {
                 name: vec![0xff, 0xee].into(),
-                quantity: Some(utxorpc::spec::cardano::asset::Quantity::OutputCoin(
-                    u64_to_bigint(100),
-                )),
+                quantity: Some(u64_to_bigint(100)),
             }],
-            redeemer: None,
         }];
 
         assert!(!filter.applies(&assets));
@@ -256,12 +246,10 @@ mod tests {
                 Multiasset {
                     policy_id: policy1.into(),
                     assets: vec![],
-                    redeemer: None,
                 },
                 Multiasset {
                     policy_id: policy2.into(),
                     assets: vec![],
-                    redeemer: None,
                 },
             ],
             ..Default::default()
@@ -289,7 +277,6 @@ mod tests {
             mint: vec![Multiasset {
                 policy_id: policy1.into(),
                 assets: vec![],
-                redeemer: None,
             }],
             ..Default::default()
         };
@@ -314,7 +301,6 @@ mod tests {
             mint: vec![Multiasset {
                 policy_id: policy1.into(),
                 assets: vec![],
-                redeemer: None,
             }],
             ..Default::default()
         };
@@ -338,7 +324,6 @@ mod tests {
             mint: vec![Multiasset {
                 policy_id: vec![0xff, 0xee, 0xdd].into(),
                 assets: vec![],
-                redeemer: None,
             }],
             ..Default::default()
         };
@@ -357,7 +342,6 @@ mod tests {
             mint: vec![Multiasset {
                 policy_id: policy_id.into(),
                 assets: vec![],
-                redeemer: None,
             }],
             ..Default::default()
         };
@@ -373,7 +357,7 @@ mod tests {
         };
 
         let tx = Tx {
-            withdrawals: vec![utxorpc::spec::cardano::Withdrawal {
+            withdrawals: vec![spec::cardano::Withdrawal {
                 reward_account: credential.into(),
                 coin: Some(u64_to_bigint(1000)),
                 redeemer: None,
@@ -391,7 +375,7 @@ mod tests {
         };
 
         let tx = Tx {
-            withdrawals: vec![utxorpc::spec::cardano::Withdrawal {
+            withdrawals: vec![spec::cardano::Withdrawal {
                 reward_account: vec![0xff, 0xee, 0xdd].into(),
                 coin: Some(u64_to_bigint(1000)),
                 redeemer: None,

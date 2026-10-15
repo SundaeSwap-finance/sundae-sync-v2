@@ -7,6 +7,14 @@ A robust, production-ready Cardano blockchain indexer with UtxoRPC support, auto
 
 This is a ground-up rewrite of [sundae-sync](https://github.com/SundaeSwap-finance/sundae-sync), designed for high availability and efficient resource utilization.
 
+### Experimental Musashi compatibility
+
+This branch uses the UTxO RPC **v1beta** sync service and pins the SundaeSwap
+Pallas and `utxorpc-spec` forks in `Cargo.toml`/`Cargo.lock`. These are experimental
+Musashi dependencies, not a production-ready dependency upgrade. The endpoint
+must serve the compatible v1beta schema, including `Tx.sub_transactions`;
+there is no fallback to the older v1alpha sync service.
+
 ## Features
 
 - **Robust Failover** - Automatic failover across multiple nodes using DynamoDB-based locking
@@ -20,7 +28,7 @@ This is a ground-up rewrite of [sundae-sync](https://github.com/SundaeSwap-finan
 
 ### Prerequisites
 
-- Rust 1.75+ (managed via `rust-toolchain.toml`)
+- Rust 1.97+ (the installed `stable` toolchain selected by `rust-toolchain.toml` must meet this minimum)
 - AWS credentials with permissions for:
   - DynamoDB (tables: `{env}-sundae-sync-v2--lock`, `{env}-sundae-sync-v2--lookup`)
   - S3 (bucket: `{env}-sundae-sync-v2-{account}-{region}`)
@@ -131,6 +139,11 @@ sundae-sync-v2
   - Historical block replay
   - UTXO resolution for wallets and applications
   - Bulk data export
+
+Lookup output amounts, raw datum encoding, native-script `scriptPubkey` keys,
+and broadcast block-reference JSON retain their existing representation despite
+the RPC schema migration. Dijkstra-only script variants remain representable;
+consumers interpreting those new variants need appropriate support.
 
 ### Broadcast System
 

@@ -3,13 +3,15 @@ name = "sundae-sync-v2"
 description = "Sundae Labs cardano indexing backend"
 version = "0.5.4"
 edition = "2021"
+rust-version = "1.97"
 repository = "https://github.com/SundaeSwap-finance/sundae-sync-v2"
 license-file = "LICENSE"
 publish = false
 default-run = "sundae-sync-v2"
 
 [dependencies]
-pallas = { version = "1.0.0-alpha.4" }
+# Match Dolos leios-musashi's mapper and Dijkstra support.
+pallas = { git = "https://github.com/SundaeSwap-finance/pallas", rev = "4c294e632fa5159bc65e82dec5007a62cf6f5112", features = ["unstable"] }
 
 tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "signal"] }
 anyhow = "1.0"
@@ -17,7 +19,8 @@ clap = { version = "4.5", features = ["derive", "env"] }
 hex = "0.4.3"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-utxorpc = "0.13"
+utxorpc-spec = { version = "=0.19.2", default-features = false, features = ["utxorpc-v1beta-cardano", "utxorpc-v1beta-sync"] }
+tonic = { version = "0.12.3", features = ["tls-native-roots"] }
 aws-config = "1.5.4"
 aws-sdk-dynamodb = "1.38.0"
 aws-sdk-s3 = "1.41.0"
@@ -35,6 +38,10 @@ num-bigint = "0.4.6"
 rustls = "0.23"
 serde_bytes = "0.11.15"
 serde_bytes_base64 = "0.1.1"
+
+[patch.crates-io]
+# Dependency-level patches do not propagate from Pallas to this workspace.
+utxorpc-spec = { git = "https://github.com/SundaeSwap-finance/utxorpc-spec", rev = "f2d528e6d05d1a2fe82bcf241fc72c45b342fa71" }
 
 [dev-dependencies]
 aws-smithy-http-client = { version = "1.1.11", features = ["test-util"] }

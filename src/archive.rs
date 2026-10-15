@@ -8,12 +8,12 @@ use aws_sdk_dynamodb::{
 use aws_sdk_s3::Client as S3Client;
 use futures::{stream, StreamExt, TryStreamExt};
 use hex::ToHex;
-use pallas::interop::utxorpc::{LedgerContext, Mapper};
+use pallas::interop::utxorpc::{v1beta::Mapper, LedgerContext};
 use serde::{Deserialize, Serialize};
 use serde_bytes_base64::Bytes;
 use serde_dynamo::{to_attribute_value, to_item};
 use tracing::trace;
-use utxorpc::spec::cardano::{asset::Quantity, Block, Datum as utxorpcDatum, Redeemer, Script};
+use utxorpc_spec::utxorpc::v1beta::cardano::{Block, Datum as utxorpcDatum, Redeemer, Script};
 
 use crate::utils::{bigint_to_string, bigint_to_u64, elapsed};
 
@@ -68,11 +68,57 @@ pub struct TxOutput {
     /// Plutus data associated with the output.
     pub datum: Option<Datum>,
     /// Script associated with the output.
+    #[serde(default, with = "lookup_script")]
     pub script: Option<Script>,
 }
 
-impl From<utxorpc::spec::cardano::TxOutput> for TxOutput {
-    fn from(value: utxorpc::spec::cardano::TxOutput) -> Self {
+// RPC v1beta renamed the native pubkey field; the lookup table did not.
+// Adapt only this spelling, including nested native scripts. Converting through
+// v1alpha protobuf types would silently discard new Dijkstra guard scripts.
+mod lookup_script {
+    use super::Script;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde_json::Value;
+
+    fn rename_pubkeys(value: &mut Value, from: &str, to: &str) {
+        match value {
+            Value::Object(fields) => {
+                if let Some(hash) = fields.remove(from) {
+                    fields.insert(to.to_string(), hash);
+                }
+                for value in fields.values_mut() {
+                    rename_pubkeys(value, from, to);
+                }
+            }
+            Value::Array(items) => {
+                for value in items {
+                    rename_pubkeys(value, from, to);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn serialize<S: Serializer>(
+        script: &Option<Script>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut value = serde_json::to_value(script).map_err(serde::ser::Error::custom)?;
+        rename_pubkeys(&mut value, "scriptPubkeyHash", "scriptPubkey");
+        value.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Script>, D::Error> {
+        let mut value = Value::deserialize(deserializer)?;
+        rename_pubkeys(&mut value, "scriptPubkey", "scriptPubkeyHash");
+        serde_json::from_value(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl From<utxorpc_spec::utxorpc::v1beta::cardano::TxOutput> for TxOutput {
+    fn from(value: utxorpc_spec::utxorpc::v1beta::cardano::TxOutput) -> Self {
         TxOutput {
             address: value.address.to_vec().into(),
             coin: value
@@ -85,23 +131,28 @@ impl From<utxorpc::spec::cardano::TxOutput> for TxOutput {
                 .into_iter()
                 .map(|m| Multiasset {
                     policy_id: m.policy_id.to_vec().into(),
-                    redeemer: m.redeemer,
+                    // v1beta puts redeemers in the witness set, not output assets.
+                    // Retain the stored field for existing lookup readers.
+                    redeemer: None,
                     assets: m
                         .assets
                         .into_iter()
                         .map(|a| Asset {
                             name: a.name.to_vec().into(),
-                            output_coin: match a.quantity {
-                                Some(Quantity::OutputCoin(o)) => bigint_to_string(&o),
-                                _ => "0".to_string(),
-                            },
+                            output_coin: a
+                                .quantity
+                                .as_ref()
+                                .map(bigint_to_string)
+                                .unwrap_or_else(|| "0".to_string()),
                         })
                         .collect(),
                 })
                 .collect(),
+            // Hash-only datums have no inline CBOR. Preserve the existing raw
+            // byte representation (empty for hash-only datums) for lookup readers.
             datum: value
                 .datum
-                .map(|d| Datum::Raw(d.original_cbor.to_vec().into())),
+                .map(|d| Datum::Raw(d.original_cbor.unwrap_or_default().to_vec().into())),
             script: value.script,
         }
     }
