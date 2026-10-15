@@ -7,8 +7,8 @@ use sundae_sync_v2::{
     archive::{Archive, NoContext},
     utils::u64_to_bigint,
 };
-use utxorpc_spec::utxorpc::v1beta::cardano::{
-    Block, BlockBody, BlockHeader, Collateral, Tx, TxOutput,
+use utxorpc_spec::utxorpc::v1::cardano::{
+    Block, BlockBody, BlockHeader, Collateral, Tx, TxCommon, TxOutput,
 };
 
 fn block(tx_count: u32) -> Block {
@@ -16,10 +16,14 @@ fn block(tx_count: u32) -> Block {
         body: Some(BlockBody {
             tx: (0..tx_count)
                 .map(|index| Tx {
-                    hash: index.to_be_bytes().repeat(8).into(),
+                    common: Some(TxCommon {
+                        hash: index.to_be_bytes().repeat(8).into(),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 })
                 .collect(),
+            ..Default::default()
         }),
         ..Default::default()
     }
@@ -97,7 +101,7 @@ async fn rollback_batches_respect_action_limit_and_include_every_transaction() {
         let expected: Vec<_> = block.body.unwrap().tx.iter().map(|tx| json!({
             "Update": {
                 "TableName": "test-lookup",
-                "Key": {"pk": {"S": format!("tx:{}", hex::encode(&tx.hash))}, "sk": {"S": "tx"}},
+                "Key": {"pk": {"S": format!("tx:{}", hex::encode(&tx.common.as_ref().unwrap().hash))}, "sk": {"S": "tx"}},
                 "UpdateExpression": "SET in_chain = :in_chain",
                 "ExpressionAttributeValues": {":in_chain": {"BOOL": false}}
             }
@@ -112,15 +116,20 @@ fn saved_block(hashes: &[u32]) -> Block {
             slot: 10,
             hash: vec![0xab; 32].into(),
             height: 7,
+            ..Default::default()
         }),
         body: Some(BlockBody {
             tx: hashes
                 .iter()
                 .map(|index| Tx {
-                    hash: index.to_be_bytes().repeat(8).into(),
+                    common: Some(TxCommon {
+                        hash: index.to_be_bytes().repeat(8).into(),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 })
                 .collect(),
+            ..Default::default()
         }),
         ..Default::default()
     }
@@ -270,8 +279,15 @@ async fn rollback_stops_and_propagates_failed_batch() {
 
 fn transaction(id: u32) -> Tx {
     Tx {
-        hash: id.to_be_bytes().repeat(8).into(),
+        common: Some(common_transaction(id)),
         successful: true,
+        ..Default::default()
+    }
+}
+
+fn common_transaction(id: u32) -> TxCommon {
+    TxCommon {
+        hash: id.to_be_bytes().repeat(8).into(),
         outputs: vec![TxOutput {
             address: vec![id as u8; 29].into(),
             coin: Some(u64_to_bigint(u64::from(id) + 1_000_000)),
@@ -287,8 +303,12 @@ fn save_block(transactions: Vec<Tx>) -> Block {
             hash: vec![0xab; 32].into(),
             height: 42,
             slot: 100,
+            ..Default::default()
         }),
-        body: Some(BlockBody { tx: transactions }),
+        body: Some(BlockBody {
+            tx: transactions,
+            ..Default::default()
+        }),
         ..Default::default()
     }
 }
@@ -341,7 +361,7 @@ fn saved_rows(http: &StaticReplayClient) -> Vec<SavedRow> {
 #[tokio::test]
 async fn save_indexes_each_subtransaction_with_its_own_outputs_and_parent_block_location() {
     let mut parent = transaction(1);
-    parent.sub_transactions = vec![transaction(2), transaction(3)];
+    parent.sub_transactions = vec![common_transaction(2), common_transaction(3)];
     let block = save_block(vec![parent.clone(), transaction(4)]);
     // S3 upload, then one batch: height, parent, two sub-txs, ordinary tx.
     let (archive, http) = archive(&[200; 2]);
@@ -349,10 +369,10 @@ async fn save_indexes_each_subtransaction_with_its_own_outputs_and_parent_block_
     let rows = saved_rows(&http);
     assert_eq!(rows.len(), 4);
     for expected in [
-        &parent,
+        parent.common.as_ref().unwrap(),
         &parent.sub_transactions[0],
         &parent.sub_transactions[1],
-        &transaction(4),
+        &common_transaction(4),
     ] {
         let row = rows
             .iter()
@@ -397,10 +417,10 @@ async fn save_indexes_each_subtransaction_with_its_own_outputs_and_parent_block_
 async fn failed_parent_retains_collateral_but_never_writes_or_rolls_back_subtransactions() {
     let mut parent = transaction(1);
     parent.successful = false;
-    // Deliberately leave the child true: parent validity is the deciding rule.
-    parent.sub_transactions = vec![transaction(2)];
+    // A v1 child has no independent validity: the parent is the deciding rule.
+    parent.sub_transactions = vec![common_transaction(2)];
     parent.collateral = Some(Collateral {
-        collateral_return: Some(transaction(3).outputs.remove(0)),
+        collateral_return: Some(common_transaction(3).outputs.remove(0)),
         ..Default::default()
     });
     let block = save_block(vec![parent]);
@@ -422,12 +442,60 @@ async fn failed_parent_retains_collateral_but_never_writes_or_rolls_back_subtran
 }
 
 #[tokio::test]
+async fn successful_parent_collateral_is_not_inherited_by_subtransactions() {
+    let mut parent = transaction(1);
+    parent.collateral = Some(Collateral {
+        collateral_return: Some(common_transaction(3).outputs.remove(0)),
+        ..Default::default()
+    });
+    parent.sub_transactions = vec![common_transaction(2)];
+    let (archive, http) = archive(&[200; 2]);
+    archive
+        .save(&save_block(vec![parent]), vec![])
+        .await
+        .unwrap();
+    let rows = saved_rows(&http);
+    assert_eq!(rows.len(), 2);
+    let parent = rows.iter().find(|row| row.pk == tx_pk(1)).unwrap();
+    let sub = rows.iter().find(|row| row.pk == tx_pk(2)).unwrap();
+    assert_eq!(parent.collateral_out.as_ref().unwrap().coin, 1_000_003);
+    assert!(parent.successful);
+    assert!(sub.successful);
+    assert!(sub.collateral_out.is_none());
+}
+
+#[tokio::test]
+async fn missing_common_fields_fail_apply_and_rollback_before_lookup_writes() {
+    let malformed = Tx {
+        successful: true,
+        sub_transactions: vec![common_transaction(2)],
+        ..Default::default()
+    };
+    let block = save_block(vec![transaction(1), malformed]);
+    // Save can archive raw bytes, but no partial lookup update should be sent.
+    let (archive, http) = archive(&[200]);
+    let error = archive.save(&block, vec![]).await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "expected transaction to have common fields"
+    );
+    let error = archive.unsave(&block).await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "expected transaction to have common fields"
+    );
+    assert!(saved_batches(&http).is_empty());
+    assert!(requests_for(&http, "DynamoDB_20120810.TransactWriteItems").is_empty());
+    assert_eq!(http.actual_requests().count(), 1);
+}
+
+#[tokio::test]
 async fn rollback_splits_parent_and_subtransactions_at_the_row_limit() {
     for ordinary_count in [0, 94, 95, 97, 198] {
         let mut parents: Vec<_> = (0..ordinary_count).map(transaction).collect();
         let mut parent = transaction(ordinary_count);
         parent.sub_transactions = (ordinary_count + 1..ordinary_count + 6)
-            .map(transaction)
+            .map(common_transaction)
             .collect();
         parents.push(parent);
         let block = save_block(parents);
@@ -461,7 +529,7 @@ async fn rollback_splits_parent_and_subtransactions_at_the_row_limit() {
 #[tokio::test]
 async fn duplicate_ids_are_written_and_rolled_back_once() {
     let mut parent = transaction(1);
-    parent.sub_transactions = vec![transaction(2), transaction(2)];
+    parent.sub_transactions = vec![common_transaction(2), common_transaction(2)];
     // Also exercise a repeated parent and a sub-tx repeated as a top-level ID.
     let block = save_block(vec![parent.clone(), parent, transaction(2)]);
     let (archive, http) = archive(&[200; 3]);
@@ -477,7 +545,7 @@ async fn duplicate_ids_are_written_and_rolled_back_once() {
 #[tokio::test]
 async fn rollback_failure_after_subtransaction_expansion_stops_and_propagates() {
     let mut parent = transaction(0);
-    parent.sub_transactions = (1..201).map(transaction).collect();
+    parent.sub_transactions = (1..201).map(common_transaction).collect();
     let (archive, http) = archive(&[200, 400, 200]);
     let error = archive.unsave(&save_block(vec![parent])).await.unwrap_err();
     assert_eq!(error.to_string(), "failed to mark txs as off-chain");
@@ -493,7 +561,7 @@ async fn rollback_failure_after_subtransaction_expansion_stops_and_propagates() 
 #[tokio::test]
 async fn musashi_transaction_fixture_maps_and_survives_apply_undo_reapply() {
     use pallas::{
-        interop::utxorpc::v1beta::Mapper,
+        interop::utxorpc::v1::Mapper,
         ledger::traverse::{Era, MultiEraTx},
     };
     const PARENT: &str = "74e2116ca6e0c809f156aa062a9d4ee8b156322618846f1bdea5d9ad7a206a12";
@@ -501,11 +569,10 @@ async fn musashi_transaction_fixture_maps_and_survives_apply_undo_reapply() {
     let bytes = hex::decode(include_str!("fixtures/dijkstra-subtx.tx").trim()).unwrap();
     let tx = MultiEraTx::decode_for_era(Era::Dijkstra, &bytes).unwrap();
     let mapped = Mapper::new(NoContext).map_tx(&tx);
-    assert_eq!(hex::encode(&mapped.hash), PARENT);
+    assert_eq!(hex::encode(&mapped.common.as_ref().unwrap().hash), PARENT);
     assert!(mapped.successful);
     assert_eq!(mapped.sub_transactions.len(), 1);
     assert_eq!(hex::encode(&mapped.sub_transactions[0].hash), SUB);
-    assert!(mapped.sub_transactions[0].successful);
     let block = save_block(vec![mapped]);
     let (archive, http) = archive(&[200; 5]);
     archive.save(&block, vec![]).await.unwrap();
@@ -543,8 +610,8 @@ async fn musashi_transaction_fixture_maps_and_survives_apply_undo_reapply() {
 }
 
 #[test]
-fn v1beta_output_conversion_preserves_lookup_amounts_datum_and_plutus_script() {
-    use utxorpc_spec::utxorpc::v1beta::cardano::{
+fn v1_output_conversion_preserves_lookup_amounts_datum_and_plutus_script() {
+    use utxorpc_spec::utxorpc::v1::cardano::{
         big_int, script, Asset, BigInt, Datum, Multiasset, Script,
     };
     let output = TxOutput {
@@ -584,7 +651,7 @@ fn v1beta_output_conversion_preserves_lookup_amounts_datum_and_plutus_script() {
 
 #[test]
 fn native_reference_scripts_keep_legacy_pubkey_keys_without_losing_dijkstra_guards() {
-    use utxorpc_spec::utxorpc::v1beta::cardano::{
+    use utxorpc_spec::utxorpc::v1::cardano::{
         native_script::NativeScript as Kind, script, NativeScript, NativeScriptList, Script,
         ScriptNOfK,
     };
@@ -638,7 +705,7 @@ fn native_reference_scripts_keep_legacy_pubkey_keys_without_losing_dijkstra_guar
 #[test]
 fn broadcast_block_references_keep_the_existing_json_contract() {
     use sundae_sync_v2::broadcast::BroadcastMessage;
-    use utxorpc_spec::utxorpc::v1beta::sync::BlockRef;
+    use utxorpc_spec::utxorpc::v1::sync::BlockRef;
     let message = BroadcastMessage {
         undo: vec![BlockRef {
             slot: 1,
@@ -665,7 +732,7 @@ fn broadcast_block_references_keep_the_existing_json_contract() {
 
 #[tokio::test]
 async fn musashi_issue_block_archives_subtransaction_outputs_and_rolls_back_every_row() {
-    use pallas::interop::utxorpc::v1beta::Mapper;
+    use pallas::interop::utxorpc::v1::Mapper;
     use std::collections::HashSet;
 
     const BLOCK: &str = "5ba7b23a04aadcd104db62d67a840fa208342fdad749ee138a4579236579a5d7";
@@ -692,7 +759,7 @@ async fn musashi_issue_block_archives_subtransaction_outputs_and_rolls_back_ever
         1
     );
     let parent = &parents[123];
-    assert_eq!(hex::encode(&parent.hash), PARENT);
+    assert_eq!(hex::encode(&parent.common.as_ref().unwrap().hash), PARENT);
     assert!(parent.successful);
     assert_eq!(hex::encode(&parent.sub_transactions[0].hash), SUB);
 
@@ -714,7 +781,7 @@ async fn musashi_issue_block_archives_subtransaction_outputs_and_rolls_back_ever
     assert_eq!(rows.len(), 127);
     let expected_keys: HashSet<_> = parents
         .iter()
-        .map(|tx| format!("tx:{}", hex::encode(&tx.hash)))
+        .map(|tx| format!("tx:{}", hex::encode(&tx.common.as_ref().unwrap().hash)))
         .chain(std::iter::once(format!("tx:{SUB}")))
         .collect();
     let saved_keys: HashSet<_> = rows.iter().map(|row| row.pk.clone()).collect();

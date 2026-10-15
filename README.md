@@ -9,11 +9,14 @@ This is a ground-up rewrite of [sundae-sync](https://github.com/SundaeSwap-finan
 
 ### Experimental Musashi compatibility
 
-This branch uses the UTxO RPC **v1beta** sync service and pins the SundaeSwap
+This branch uses the UTxO RPC **v1** sync service and pins the SundaeSwap
 Pallas and `utxorpc-spec` forks in `Cargo.toml`/`Cargo.lock`. These are experimental
 Musashi dependencies, not a production-ready dependency upgrade. The endpoint
-must serve the compatible v1beta schema, including `Tx.sub_transactions`;
-there is no fallback to the older v1alpha sync service.
+must serve the compatible v1 schema: parent transactions contain `Tx.common`
+and `Tx.sub_transactions` contains `TxCommon` values. There is no fallback to
+the older v1alpha or v1beta sync services. The pins match Dolos `leios-musashi`
+at `d4f2e681167bac9739c4fb330e018047a06b9586`; they are exact revisions rather
+than floating branch references.
 
 ## Features
 
@@ -149,6 +152,11 @@ sub-transaction's own outputs and the parent's containing block hash and S3
 location. No separate type flag or parent-ID field is added: output consumers
 resolve either kind of transaction by ID and output index.
 
+The v1 schema gives only the parent a success flag and collateral. Sub-tx rows
+inherit successful execution from the parent and never inherit its collateral
+return. A parent missing its `common` fields is rejected rather than silently
+omitted or indexed under an empty default ID.
+
 Apply and rollback select the same unique IDs. Rollback marks these rows
 `in_chain = false`, splitting the expanded list into at most 100 actions per
 DynamoDB transaction. A parent and its children can span requests; rollback is
@@ -251,6 +259,15 @@ cargo build
 
 ```bash
 cargo test
+```
+
+The opt-in live v1 test fetches the issue fixture and follows the chain from its
+predecessor through the actual Rust follower. It only reads Dolos; it does not
+write to AWS:
+
+```bash
+UTXO_RPC_TEST_URI=http://127.0.0.1:50051 \
+  cargo test --locked --test follower_tests live_v1_fetch_and_follow_preserve_musashi_subtransaction -- --ignored
 ```
 
 ### Linting

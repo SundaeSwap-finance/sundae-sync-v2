@@ -1,5 +1,5 @@
 use std::time::{Duration, SystemTime};
-use utxorpc_spec::utxorpc::v1beta::cardano::{big_int, BigInt};
+use utxorpc_spec::utxorpc::v1::cardano::{big_int, BigInt};
 
 pub fn elapsed(start: SystemTime) -> Duration {
     SystemTime::now()

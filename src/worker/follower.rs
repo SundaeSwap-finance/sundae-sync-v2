@@ -5,7 +5,7 @@ use tonic::{
     Request, Streaming,
 };
 use tracing::warn;
-use utxorpc_spec::utxorpc::v1beta::{
+use utxorpc_spec::utxorpc::v1::{
     cardano::{Block, BlockHeader},
     sync::{
         any_chain_block::Chain, follow_tip_response::Action,

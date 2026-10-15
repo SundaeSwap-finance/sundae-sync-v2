@@ -8,7 +8,7 @@ use bytes::Bytes;
 use hex::ToHex;
 use serde::{ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer};
 use tracing::{info, warn};
-use utxorpc_spec::utxorpc::v1beta::sync::BlockRef;
+use utxorpc_spec::utxorpc::v1::sync::BlockRef;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Destination {

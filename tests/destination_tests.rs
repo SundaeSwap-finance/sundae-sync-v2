@@ -4,7 +4,7 @@ use anyhow::Result;
 use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoClient};
 use bytes::Bytes;
 use serde_dynamo::to_item;
-use utxorpc_spec::utxorpc::v1beta::sync::BlockRef;
+use utxorpc_spec::utxorpc::v1::sync::BlockRef;
 
 use sundae_sync_v2::broadcast::destination::Destination;
 

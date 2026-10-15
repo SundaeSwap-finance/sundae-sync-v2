@@ -11,13 +11,13 @@ use aws_sdk_dynamodb::{
 use aws_sdk_s3::Client as S3Client;
 use futures::{stream, StreamExt, TryStreamExt};
 use hex::ToHex;
-use pallas::interop::utxorpc::{v1beta::Mapper, LedgerContext};
+use pallas::interop::utxorpc::{v1::Mapper, LedgerContext};
 use serde::{Deserialize, Serialize};
 use serde_bytes_base64::Bytes;
 use serde_dynamo::{to_attribute_value, to_item};
 use tracing::trace;
-use utxorpc_spec::utxorpc::v1beta::cardano::{
-    Block, BlockBody, Datum as utxorpcDatum, Redeemer, Script, Tx,
+use utxorpc_spec::utxorpc::v1::cardano::{
+    Block, BlockBody, Collateral, Datum as utxorpcDatum, Redeemer, Script, TxCommon,
 };
 
 use crate::utils::{bigint_to_string, bigint_to_u64, elapsed};
@@ -81,7 +81,7 @@ pub struct TxOutput {
     pub script: Option<Script>,
 }
 
-// RPC v1beta renamed the native pubkey field; the lookup table did not.
+// RPC v1 uses the renamed native pubkey field; the lookup table does not.
 // Adapt only this spelling, including nested native scripts. Converting through
 // v1alpha protobuf types would silently discard new Dijkstra guard scripts.
 mod lookup_script {
@@ -126,8 +126,8 @@ mod lookup_script {
     }
 }
 
-impl From<utxorpc_spec::utxorpc::v1beta::cardano::TxOutput> for TxOutput {
-    fn from(value: utxorpc_spec::utxorpc::v1beta::cardano::TxOutput) -> Self {
+impl From<utxorpc_spec::utxorpc::v1::cardano::TxOutput> for TxOutput {
+    fn from(value: utxorpc_spec::utxorpc::v1::cardano::TxOutput) -> Self {
         TxOutput {
             address: value.address.to_vec().into(),
             coin: value
@@ -140,7 +140,7 @@ impl From<utxorpc_spec::utxorpc::v1beta::cardano::TxOutput> for TxOutput {
                 .into_iter()
                 .map(|m| Multiasset {
                     policy_id: m.policy_id.to_vec().into(),
-                    // v1beta puts redeemers in the witness set, not output assets.
+                    // v1 puts redeemers in the witness set, not output assets.
                     // Retain the stored field for existing lookup readers.
                     redeemer: None,
                     assets: m
@@ -179,22 +179,44 @@ pub struct TxRef {
     pub collateral_out: Option<TxOutput>,
 }
 
+struct IndexedTransaction<'a> {
+    common: &'a TxCommon,
+    successful: bool,
+    collateral: Option<&'a Collateral>,
+}
+
 /// Parent rows are retained even for failed transactions (for collateral lookup).
 /// Sub-transactions have their own IDs/outputs, but only take effect if the
 /// enclosing parent succeeds. Use the same row selection for apply and rollback.
-fn indexed_transactions(body: &BlockBody) -> impl Iterator<Item = &Tx> {
+fn indexed_transactions(body: &BlockBody) -> Result<Vec<IndexedTransaction<'_>>> {
     let mut seen = HashSet::new();
-    body.tx
-        .iter()
-        .flat_map(|parent| {
-            std::iter::once(parent).chain(
-                parent
-                    .sub_transactions
-                    .iter()
-                    .filter(move |_| parent.successful),
-            )
-        })
-        .filter(move |tx| seen.insert(tx.hash.clone()))
+    let mut rows = Vec::new();
+    for parent in &body.tx {
+        let common = parent
+            .common
+            .as_ref()
+            .context("expected transaction to have common fields")?;
+        let parent_row = IndexedTransaction {
+            common,
+            successful: parent.successful,
+            collateral: parent.collateral.as_ref(),
+        };
+        let children = parent
+            .sub_transactions
+            .iter()
+            .filter(|_| parent.successful)
+            .map(|common| IndexedTransaction {
+                common,
+                successful: true,
+                collateral: None,
+            });
+        for row in std::iter::once(parent_row).chain(children) {
+            if seen.insert(row.common.hash.clone()) {
+                rows.push(row);
+            }
+        }
+    }
+    Ok(rows)
 }
 
 fn block_hash_key(hash: impl ToHex) -> String {
@@ -247,18 +269,23 @@ impl Archive {
             .context("expected block to have a body")?;
         // Expand and deduplicate before batching: DynamoDB rejects repeated keys
         // within a BatchWriteItem request, including repeated sub-transactions.
-        for tx in indexed_transactions(body) {
+        for tx in indexed_transactions(body)? {
             let tx_ref = TxRef {
-                pk: format!("tx:{}", tx.hash.encode_hex::<String>()),
+                pk: format!("tx:{}", tx.common.hash.encode_hex::<String>()),
                 sk: "tx".to_string(),
                 block: header.hash.encode_hex(),
                 location: location.clone(),
                 in_chain: true,
-                utxos: tx.outputs.iter().cloned().map(|o| o.into()).collect(),
+                utxos: tx
+                    .common
+                    .outputs
+                    .iter()
+                    .cloned()
+                    .map(|o| o.into())
+                    .collect(),
                 successful: tx.successful,
                 collateral_out: tx
                     .collateral
-                    .as_ref()
                     .and_then(|c| c.collateral_return.clone().map(|o| o.into())),
             };
             items.push(to_item(tx_ref)?);
@@ -300,7 +327,7 @@ impl Archive {
 
     pub async fn unsave(&self, block: &Block) -> Result<()> {
         let body = block.body.as_ref().context("expected block body")?;
-        let transactions: Vec<_> = indexed_transactions(body).collect();
+        let transactions = indexed_transactions(body)?;
         // Count rows after expansion/deduplication, not top-level transactions.
         // DynamoDB allows at most 100 actions per transaction.
         for chunk in transactions.chunks(100) {
@@ -310,7 +337,10 @@ impl Archive {
                     .table_name(self.table_name.clone())
                     .key(
                         "pk",
-                        to_attribute_value(format!("tx:{}", tx.hash.encode_hex::<String>()))?,
+                        to_attribute_value(format!(
+                            "tx:{}",
+                            tx.common.hash.encode_hex::<String>()
+                        ))?,
                     )
                     .key("sk", to_attribute_value("tx")?)
                     .update_expression("SET in_chain = :in_chain")

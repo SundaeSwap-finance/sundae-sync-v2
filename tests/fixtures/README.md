@@ -5,7 +5,7 @@
 `5ba7b23a04aadcd104db62d67a840fa208342fdad749ee138a4579236579a5d7.cbor.hex`
 is the full block requested by [issue #12](https://github.com/SundaeSwap-finance/sundae-sync-v2/issues/12),
 supplied by Rodrigo from another sync-v2 instance's archive. The hex was moved
-without modification. Its decoded bytes also match the local Dolos v1beta
+without modification. Its decoded bytes also match the local Dolos v1
 `FetchBlock` response's `nativeBytes`.
 
 Expected facts checked independently of Pallas using Python `cbor2` to locate

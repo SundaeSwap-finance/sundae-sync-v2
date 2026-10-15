@@ -7,7 +7,7 @@ use aws_sdk_s3::primitives::Blob;
 use serde::{Deserialize, Serialize};
 use serde_dynamo::aws_sdk_dynamodb_1::from_items;
 use tokio::sync::watch::Receiver;
-use utxorpc_spec::utxorpc::v1beta::{cardano::Block, sync::BlockRef};
+use utxorpc_spec::utxorpc::v1::{cardano::Block, sync::BlockRef};
 
 use super::Destination;
 

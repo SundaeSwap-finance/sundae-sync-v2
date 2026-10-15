@@ -5,8 +5,8 @@ use futures::stream;
 use sundae_sync_v2::worker::Follower;
 use tokio::{net::TcpListener, sync::mpsc, task::JoinHandle, time::timeout};
 use tonic::{transport::Server, Request, Response, Status};
-use utxorpc_spec::utxorpc::v1beta::{
-    cardano::{Block, BlockBody, BlockHeader, Tx},
+use utxorpc_spec::utxorpc::v1::{
+    cardano::{Block, BlockBody, BlockHeader, Tx, TxCommon},
     sync::{
         any_chain_block::Chain,
         follow_tip_response::Action,
@@ -120,14 +120,8 @@ fn event(action: Action) -> FollowTipResponse {
 }
 
 fn block() -> Block {
-    let leaf = Tx {
-        hash: Bytes::from_static(b"\x00\xffleaf"),
-        successful: true,
-        ..Default::default()
-    };
-    let child = Tx {
-        hash: Bytes::from_static(b"child"),
-        sub_transactions: vec![leaf],
+    let child = TxCommon {
+        hash: Bytes::from_static(b"\x00\xffchild"),
         ..Default::default()
     };
     Block {
@@ -135,13 +129,19 @@ fn block() -> Block {
             slot: 1234,
             height: 567,
             hash: Bytes::from_static(b"\x00\xffheader"),
+            ..Default::default()
         }),
         body: Some(BlockBody {
             tx: vec![Tx {
-                hash: Bytes::from_static(b"parent"),
-                sub_transactions: vec![child, Tx::default()],
+                common: Some(TxCommon {
+                    hash: Bytes::from_static(b"parent"),
+                    ..Default::default()
+                }),
+                successful: true,
+                sub_transactions: vec![child, TxCommon::default()],
                 ..Default::default()
             }],
+            ..Default::default()
         }),
         timestamp: 123456789,
     }
@@ -175,8 +175,8 @@ async fn apply_and_undo_preserve_nested_transactions_and_native_bytes() {
         let (actual_forward, bytes, parsed, header) = bounded(follower.next_event()).await.unwrap();
         assert_eq!(actual_forward, forward);
         assert_eq!(bytes, native);
-        // Whole-message equality includes both levels of sub_transactions, their
-        // order, bytes fields, and the separate header returned by the interface.
+        // Whole-message equality includes common fields and sub-transactions,
+        // their order, bytes fields, and the separately returned header.
         assert_eq!(parsed, expected);
         assert_eq!(header, expected.header.clone().unwrap());
     }
@@ -319,4 +319,91 @@ async fn invalid_api_metadata_returns_contextual_error_without_rpc() {
         server.requests.try_recv(),
         Err(mpsc::error::TryRecvError::Empty)
     ));
+}
+
+#[tokio::test]
+#[ignore = "requires UTXO_RPC_TEST_URI serving the Musashi fixture and its predecessor"]
+async fn live_v1_fetch_and_follow_preserve_musashi_subtransaction() {
+    use pallas::interop::utxorpc::v1::Mapper;
+    use sundae_sync_v2::archive::NoContext;
+    use tonic::transport::Endpoint;
+    use utxorpc_spec::utxorpc::v1::sync::sync_service_client::SyncServiceClient;
+
+    let uri = std::env::var("UTXO_RPC_TEST_URI").expect("set UTXO_RPC_TEST_URI explicitly");
+    let _ =
+        rustls::crypto::CryptoProvider::install_default(rustls::crypto::ring::default_provider());
+    let channel = bounded(Endpoint::from_shared(uri.clone()).unwrap().connect())
+        .await
+        .unwrap();
+    let mut client = SyncServiceClient::new(channel).max_decoding_message_size(usize::MAX);
+    let raw = hex::decode(
+        include_str!(
+            "fixtures/5ba7b23a04aadcd104db62d67a840fa208342fdad749ee138a4579236579a5d7.cbor.hex"
+        )
+        .trim(),
+    )
+    .unwrap();
+    let expected = Mapper::new(NoContext).map_block_cbor(&raw);
+    let expected_header = expected.header.as_ref().unwrap();
+    // v1 FetchBlock accepts a single optional reference, not a repeated field.
+    let fetched = bounded(client.fetch_block(FetchBlockRequest {
+        r#ref: Some(BlockRef {
+            hash: expected_header.hash.clone(),
+            ..Default::default()
+        }),
+        field_mask: None,
+    }))
+    .await
+    .unwrap()
+    .into_inner()
+    .block
+    .unwrap();
+    assert_eq!(fetched.native_bytes.as_ref(), raw);
+    let Some(Chain::Cardano(parsed)) = fetched.chain else {
+        panic!("expected Cardano block")
+    };
+    assert_eq!(parsed.header, expected.header);
+    let parent = &parsed.body.as_ref().unwrap().tx[123];
+    assert!(parent.successful);
+    assert_eq!(parent.sub_transactions.len(), 1);
+    let sub = &parent.sub_transactions[0];
+    assert_eq!(
+        hex::encode(&sub.hash),
+        "ede49f69c8e99d253d82b0b06d024be6435168cfeb1b960761370fe1bf5f8377"
+    );
+    assert_eq!(
+        sub.outputs,
+        expected.body.as_ref().unwrap().tx[123].sub_transactions[0].outputs
+    );
+
+    let previous = bounded(client.fetch_block(FetchBlockRequest {
+        r#ref: Some(BlockRef {
+            height: expected_header.height - 1,
+            ..Default::default()
+        }),
+        field_mask: None,
+    }))
+    .await
+    .unwrap()
+    .into_inner()
+    .block
+    .unwrap();
+    let Some(Chain::Cardano(previous)) = previous.chain else {
+        panic!("expected predecessor")
+    };
+    let previous = previous.header.unwrap();
+    let point = BlockRef {
+        hash: previous.hash,
+        slot: previous.slot,
+        height: previous.height,
+        timestamp: 0,
+    };
+    let mut follower = bounded(Follower::new(&uri, &None, vec![point]))
+        .await
+        .unwrap();
+    let (forward, native, followed, header) = bounded(follower.next_event()).await.unwrap();
+    assert!(forward);
+    assert_eq!(&header, expected_header);
+    assert_eq!(native.as_ref(), raw);
+    assert_eq!(followed, parsed);
 }

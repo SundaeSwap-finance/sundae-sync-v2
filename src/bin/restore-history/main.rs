@@ -5,7 +5,7 @@ use aws_sdk_s3::Client as S3Client;
 use clap::Parser;
 use pallas::{
     codec::Fragment,
-    interop::utxorpc::v1beta::Mapper,
+    interop::utxorpc::v1::Mapper,
     ledger::traverse::MultiEraHeader,
     network::{
         facades::{NodeClient, PeerClient},
