@@ -140,10 +140,30 @@ sundae-sync-v2
   - UTXO resolution for wallets and applications
   - Bulk data export
 
+#### Sub-transaction lookup rows
+
+Top-level transactions retain their existing lookup rows, including failed
+transactions for collateral lookup. Each sub-transaction of a successful parent
+also gets a row with `pk = tx:<sub-tx-id>` and `sk = tx`. It holds the
+sub-transaction's own outputs and the parent's containing block hash and S3
+location. No separate type flag or parent-ID field is added: output consumers
+resolve either kind of transaction by ID and output index.
+
+Apply and rollback select the same unique IDs. Rollback marks these rows
+`in_chain = false`, splitting the expanded list into at most 100 actions per
+DynamoDB transaction. A parent and its children can span requests; rollback is
+not atomic across the entire block. Re-applying restores the same rows on-chain.
+Failed parents never create or roll back sub-transaction rows.
+
 Lookup output amounts, raw datum encoding, native-script `scriptPubkey` keys,
 and broadcast block-reference JSON retain their existing representation despite
 the RPC schema migration. Dijkstra-only script variants remain representable;
 consumers interpreting those new variants need appropriate support.
+
+This change does not backfill old lookup rows or change broadcast filter rules.
+Tests include the issue-specific Musashi block `5ba7b23a…` and a smaller real
+transaction from Pallas; see [`tests/fixtures/README.md`](tests/fixtures/README.md)
+for their provenance and independently checked IDs and outputs.
 
 ### Broadcast System
 

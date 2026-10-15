@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::{collections::HashSet, time::SystemTime};
 
 use anyhow::{Context, Result};
 use aws_sdk_dynamodb::{
@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_bytes_base64::Bytes;
 use serde_dynamo::{to_attribute_value, to_item};
 use tracing::trace;
-use utxorpc_spec::utxorpc::v1beta::cardano::{Block, Datum as utxorpcDatum, Redeemer, Script};
+use utxorpc_spec::utxorpc::v1beta::cardano::{
+    Block, BlockBody, Datum as utxorpcDatum, Redeemer, Script, Tx,
+};
 
 use crate::utils::{bigint_to_string, bigint_to_u64, elapsed};
 
@@ -170,6 +172,24 @@ pub struct TxRef {
     pub collateral_out: Option<TxOutput>,
 }
 
+/// Parent rows are retained even for failed transactions (for collateral lookup).
+/// Sub-transactions have their own IDs/outputs, but only take effect if the
+/// enclosing parent succeeds. Use the same row selection for apply and rollback.
+fn indexed_transactions(body: &BlockBody) -> impl Iterator<Item = &Tx> {
+    let mut seen = HashSet::new();
+    body.tx
+        .iter()
+        .flat_map(|parent| {
+            std::iter::once(parent).chain(
+                parent
+                    .sub_transactions
+                    .iter()
+                    .filter(move |_| parent.successful),
+            )
+        })
+        .filter(move |tx| seen.insert(tx.hash.clone()))
+}
+
 fn block_hash_key(hash: impl ToHex) -> String {
     let hash: String = hash.encode_hex();
     let (prefix, rest) = hash.split_at(2);
@@ -222,20 +242,21 @@ impl Archive {
         );
         let body = block
             .body
-            .clone()
+            .as_ref()
             .context("expected block to have a body")?;
-        for tx in body.tx {
+        for tx in indexed_transactions(body) {
             let tx_ref = TxRef {
                 pk: format!("tx:{}", tx.hash.encode_hex::<String>()),
                 sk: "tx".to_string(),
                 block: header.hash.encode_hex(),
                 location: location.clone(),
                 in_chain: true,
-                utxos: tx.outputs.into_iter().map(|o| o.into()).collect(),
+                utxos: tx.outputs.iter().cloned().map(|o| o.into()).collect(),
                 successful: tx.successful,
                 collateral_out: tx
                     .collateral
-                    .and_then(|c| c.collateral_return.map(|o| o.into())),
+                    .as_ref()
+                    .and_then(|c| c.collateral_return.clone().map(|o| o.into())),
             };
             tasks.push(
                 self.dynamo
@@ -271,9 +292,11 @@ impl Archive {
     }
 
     pub async fn unsave(&self, block: &Block) -> Result<()> {
-        let block = block.body.clone().context("expected block body")?;
+        let body = block.body.as_ref().context("expected block body")?;
+        let transactions: Vec<_> = indexed_transactions(body).collect();
+        // Count rows after expansion/deduplication, not top-level transactions.
         // DynamoDB allows at most 100 actions per transaction.
-        for chunk in block.tx.chunks(100) {
+        for chunk in transactions.chunks(100) {
             let mut ddb_tx = self.dynamo.transact_write_items();
             for tx in chunk {
                 let tx_update = Update::builder()
