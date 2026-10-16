@@ -1,6 +1,7 @@
 use pallas::ledger::addresses::Address;
 use serde::{Deserialize, Serialize};
-use utxorpc::spec::cardano::{Block, Multiasset, Tx, TxOutput};
+use spec::cardano::{Block, Multiasset, Tx, TxCommon, TxOutput};
+use utxorpc_spec::utxorpc::v1 as spec;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TokenFilter {
@@ -44,7 +45,7 @@ pub enum FilterConfig {
     },
 }
 
-fn any_inputs_and_outputs<F>(tx: &Tx, filter: F) -> bool
+fn any_inputs_and_outputs<F>(tx: &TxCommon, filter: F) -> bool
 where
     F: Fn(&TxOutput) -> bool,
 {
@@ -77,9 +78,15 @@ impl FilterConfig {
     }
 
     pub fn applies(&self, tx: &Tx) -> bool {
+        tx.common
+            .as_ref()
+            .is_some_and(|common| self.applies_common(common))
+    }
+
+    fn applies_common(&self, tx: &TxCommon) -> bool {
         match self {
-            FilterConfig::All(criteria) => criteria.iter().all(|c| c.applies(tx)),
-            FilterConfig::Any(criteria) => criteria.iter().any(|c| c.applies(tx)),
+            FilterConfig::All(criteria) => criteria.iter().all(|c| c.applies_common(tx)),
+            FilterConfig::Any(criteria) => criteria.iter().any(|c| c.applies_common(tx)),
             FilterConfig::Address { address } => {
                 any_inputs_and_outputs(tx, |out| address.eq(&out.address.to_vec()))
             }
@@ -132,6 +139,42 @@ mod tests {
     use super::*;
     use crate::utils::u64_to_bigint;
 
+    fn transaction(common: TxCommon) -> Tx {
+        Tx {
+            common: Some(common),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn v1_block_filters_use_parent_common_fields_only() {
+        let address = vec![0x60; 29];
+        let filter = FilterConfig::Address {
+            address: address.clone(),
+        };
+        let matching = TxCommon {
+            outputs: vec![TxOutput {
+                address: address.into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut parent = transaction(TxCommon::default());
+        parent.sub_transactions.push(matching.clone());
+        let mut block = Block {
+            body: Some(spec::cardano::BlockBody {
+                tx: vec![parent],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        // Adding sub-transaction filter traversal remains a separate feature.
+        assert!(!filter.applies_block(&block));
+        block.body.as_mut().unwrap().tx[0].common = Some(matching);
+        assert!(filter.applies_block(&block));
+        assert!(!filter.applies(&Tx::default()));
+    }
+
     #[test]
     fn test_token_filter_policy_match() {
         let policy_id = vec![0x01, 0x02, 0x03];
@@ -142,7 +185,6 @@ mod tests {
         let assets = vec![Multiasset {
             policy_id: policy_id.clone().into(),
             assets: vec![],
-            redeemer: None,
         }];
 
         assert!(filter.applies(&assets));
@@ -157,7 +199,6 @@ mod tests {
         let assets = vec![Multiasset {
             policy_id: vec![0xff, 0xee, 0xdd].into(),
             assets: vec![],
-            redeemer: None,
         }];
 
         assert!(!filter.applies(&assets));
@@ -174,13 +215,10 @@ mod tests {
 
         let assets = vec![Multiasset {
             policy_id: policy_id.clone().into(),
-            assets: vec![utxorpc::spec::cardano::Asset {
+            assets: vec![spec::cardano::Asset {
                 name: asset_name.clone().into(),
-                quantity: Some(utxorpc::spec::cardano::asset::Quantity::OutputCoin(
-                    u64_to_bigint(100),
-                )),
+                quantity: Some(u64_to_bigint(100)),
             }],
-            redeemer: None,
         }];
 
         assert!(filter.applies(&assets));
@@ -195,13 +233,10 @@ mod tests {
 
         let assets = vec![Multiasset {
             policy_id: vec![0xff, 0xee, 0xdd].into(),
-            assets: vec![utxorpc::spec::cardano::Asset {
+            assets: vec![spec::cardano::Asset {
                 name: vec![0x04, 0x05].into(),
-                quantity: Some(utxorpc::spec::cardano::asset::Quantity::OutputCoin(
-                    u64_to_bigint(100),
-                )),
+                quantity: Some(u64_to_bigint(100)),
             }],
-            redeemer: None,
         }];
 
         assert!(!filter.applies(&assets));
@@ -217,13 +252,10 @@ mod tests {
 
         let assets = vec![Multiasset {
             policy_id: policy_id.clone().into(),
-            assets: vec![utxorpc::spec::cardano::Asset {
+            assets: vec![spec::cardano::Asset {
                 name: vec![0xff, 0xee].into(),
-                quantity: Some(utxorpc::spec::cardano::asset::Quantity::OutputCoin(
-                    u64_to_bigint(100),
-                )),
+                quantity: Some(u64_to_bigint(100)),
             }],
-            redeemer: None,
         }];
 
         assert!(!filter.applies(&assets));
@@ -251,21 +283,19 @@ mod tests {
             })),
         ]);
 
-        let tx = Tx {
+        let tx = transaction(TxCommon {
             mint: vec![
                 Multiasset {
                     policy_id: policy1.into(),
                     assets: vec![],
-                    redeemer: None,
                 },
                 Multiasset {
                     policy_id: policy2.into(),
                     assets: vec![],
-                    redeemer: None,
                 },
             ],
             ..Default::default()
-        };
+        });
 
         assert!(filter.applies(&tx));
     }
@@ -285,14 +315,13 @@ mod tests {
         ]);
 
         // Only has policy1, missing policy2
-        let tx = Tx {
+        let tx = transaction(TxCommon {
             mint: vec![Multiasset {
                 policy_id: policy1.into(),
                 assets: vec![],
-                redeemer: None,
             }],
             ..Default::default()
-        };
+        });
 
         assert!(!filter.applies(&tx));
     }
@@ -310,14 +339,13 @@ mod tests {
         ]);
 
         // Only has policy1, but that's enough for Any
-        let tx = Tx {
+        let tx = transaction(TxCommon {
             mint: vec![Multiasset {
                 policy_id: policy1.into(),
                 assets: vec![],
-                redeemer: None,
             }],
             ..Default::default()
-        };
+        });
 
         assert!(filter.applies(&tx));
     }
@@ -334,14 +362,13 @@ mod tests {
         ]);
 
         // Has neither policy
-        let tx = Tx {
+        let tx = transaction(TxCommon {
             mint: vec![Multiasset {
                 policy_id: vec![0xff, 0xee, 0xdd].into(),
                 assets: vec![],
-                redeemer: None,
             }],
             ..Default::default()
-        };
+        });
 
         assert!(!filter.applies(&tx));
     }
@@ -353,14 +380,13 @@ mod tests {
             policy: policy_id.clone(),
         });
 
-        let tx = Tx {
+        let tx = transaction(TxCommon {
             mint: vec![Multiasset {
                 policy_id: policy_id.into(),
                 assets: vec![],
-                redeemer: None,
             }],
             ..Default::default()
-        };
+        });
 
         assert!(filter.applies(&tx));
     }
@@ -372,14 +398,14 @@ mod tests {
             credential: credential.clone(),
         };
 
-        let tx = Tx {
-            withdrawals: vec![utxorpc::spec::cardano::Withdrawal {
+        let tx = transaction(TxCommon {
+            withdrawals: vec![spec::cardano::Withdrawal {
                 reward_account: credential.into(),
                 coin: Some(u64_to_bigint(1000)),
                 redeemer: None,
             }],
             ..Default::default()
-        };
+        });
 
         assert!(filter.applies(&tx));
     }
@@ -390,14 +416,14 @@ mod tests {
             credential: vec![0x11, 0x22, 0x33],
         };
 
-        let tx = Tx {
-            withdrawals: vec![utxorpc::spec::cardano::Withdrawal {
+        let tx = transaction(TxCommon {
+            withdrawals: vec![spec::cardano::Withdrawal {
                 reward_account: vec![0xff, 0xee, 0xdd].into(),
                 coin: Some(u64_to_bigint(1000)),
                 redeemer: None,
             }],
             ..Default::default()
-        };
+        });
 
         assert!(!filter.applies(&tx));
     }

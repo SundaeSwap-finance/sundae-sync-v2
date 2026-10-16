@@ -1,4 +1,5 @@
 use std::time::{Duration, SystemTime};
+use utxorpc_spec::utxorpc::v1::cardano::{big_int, BigInt};
 
 pub fn elapsed(start: SystemTime) -> Duration {
     SystemTime::now()
@@ -6,22 +7,22 @@ pub fn elapsed(start: SystemTime) -> Duration {
         .expect("time went backwards")
 }
 
-pub fn u64_to_bigint(value: u64) -> utxorpc::spec::cardano::BigInt {
-    utxorpc::spec::cardano::BigInt {
-        big_int: Some(utxorpc::spec::cardano::big_int::BigInt::Int(value as i64)),
+pub fn u64_to_bigint(value: u64) -> BigInt {
+    BigInt {
+        big_int: Some(big_int::BigInt::Int(value as i64)),
     }
 }
 
-pub fn bigint_to_u64(value: &utxorpc::spec::cardano::BigInt) -> Option<u64> {
-    if let utxorpc::spec::cardano::big_int::BigInt::Int(val) = value.big_int.as_ref()? {
+pub fn bigint_to_u64(value: &BigInt) -> Option<u64> {
+    if let big_int::BigInt::Int(val) = value.big_int.as_ref()? {
         return Some(*val as u64);
     };
     None
 }
 
-pub fn bigint_to_string(value: &utxorpc::spec::cardano::BigInt) -> String {
+pub fn bigint_to_string(value: &BigInt) -> String {
+    use big_int::BigInt as UtxorpcBigInt;
     use num_bigint::{BigInt, Sign};
-    use utxorpc::spec::cardano::big_int::BigInt as UtxorpcBigInt;
     let value = match &value.big_int {
         Some(UtxorpcBigInt::Int(i)) => BigInt::from_signed_bytes_le(&i.to_le_bytes()),
         Some(UtxorpcBigInt::BigUInt(i)) => BigInt::from_bytes_be(Sign::Plus, i),
@@ -34,7 +35,6 @@ pub fn bigint_to_string(value: &utxorpc::spec::cardano::BigInt) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use utxorpc::spec::cardano::{big_int, BigInt};
 
     fn make(inner: big_int::BigInt) -> BigInt {
         BigInt {

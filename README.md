@@ -7,6 +7,17 @@ A robust, production-ready Cardano blockchain indexer with UtxoRPC support, auto
 
 This is a ground-up rewrite of [sundae-sync](https://github.com/SundaeSwap-finance/sundae-sync), designed for high availability and efficient resource utilization.
 
+### Experimental Musashi compatibility
+
+This branch uses the UTxO RPC **v1** sync service and pins the SundaeSwap
+Pallas and `utxorpc-spec` forks in `Cargo.toml`/`Cargo.lock`. These are experimental
+Musashi dependencies, not a production-ready dependency upgrade. The endpoint
+must serve the compatible v1 schema: parent transactions contain `Tx.common`
+and `Tx.sub_transactions` contains `TxCommon` values. There is no fallback to
+the older v1alpha or v1beta sync services. The pins match Dolos `leios-musashi`
+at `d4f2e681167bac9739c4fb330e018047a06b9586`; they are exact revisions rather
+than floating branch references.
+
 ## Features
 
 - **Robust Failover** - Automatic failover across multiple nodes using DynamoDB-based locking
@@ -20,7 +31,7 @@ This is a ground-up rewrite of [sundae-sync](https://github.com/SundaeSwap-finan
 
 ### Prerequisites
 
-- Rust 1.75+ (managed via `rust-toolchain.toml`)
+- Rust 1.97+ (the installed `stable` toolchain selected by `rust-toolchain.toml` must meet this minimum)
 - AWS credentials with permissions for:
   - DynamoDB (tables: `{env}-sundae-sync-v2--lock`, `{env}-sundae-sync-v2--lookup`)
   - S3 (bucket: `{env}-sundae-sync-v2-{account}-{region}`)
@@ -132,6 +143,36 @@ sundae-sync-v2
   - UTXO resolution for wallets and applications
   - Bulk data export
 
+#### Sub-transaction lookup rows
+
+Top-level transactions retain their existing lookup rows, including failed
+transactions for collateral lookup. Each sub-transaction of a successful parent
+also gets a row with `pk = tx:<sub-tx-id>` and `sk = tx`. It holds the
+sub-transaction's own outputs and the parent's containing block hash and S3
+location. No separate type flag or parent-ID field is added: output consumers
+resolve either kind of transaction by ID and output index.
+
+The v1 schema gives only the parent a success flag and collateral. Sub-tx rows
+inherit successful execution from the parent and never inherit its collateral
+return. A parent missing its `common` fields is rejected rather than silently
+omitted or indexed under an empty default ID.
+
+Apply and rollback select the same unique IDs. Rollback marks these rows
+`in_chain = false`, splitting the expanded list into at most 100 actions per
+DynamoDB transaction. A parent and its children can span requests; rollback is
+not atomic across the entire block. Re-applying restores the same rows on-chain.
+Failed parents never create or roll back sub-transaction rows.
+
+Lookup output amounts, raw datum encoding, native-script `scriptPubkey` keys,
+and broadcast block-reference JSON retain their existing representation despite
+the RPC schema migration. Dijkstra-only script variants remain representable;
+consumers interpreting those new variants need appropriate support.
+
+This change does not backfill old lookup rows or change broadcast filter rules.
+Tests include the issue-specific Musashi block `5ba7b23a…` and a smaller real
+transaction from Pallas; see [`tests/fixtures/README.md`](tests/fixtures/README.md)
+for their provenance and independently checked IDs and outputs.
+
 ### Broadcast System
 
 - Replicates events to multiple Kinesis streams
@@ -218,6 +259,15 @@ cargo build
 
 ```bash
 cargo test
+```
+
+The opt-in live v1 test fetches the issue fixture and follows the chain from its
+predecessor through the actual Rust follower. It only reads Dolos; it does not
+write to AWS:
+
+```bash
+UTXO_RPC_TEST_URI=http://127.0.0.1:50051 \
+  cargo test --locked --test follower_tests live_v1_fetch_and_follow_preserve_musashi_subtransaction -- --ignored
 ```
 
 ### Linting

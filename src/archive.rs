@@ -11,12 +11,14 @@ use aws_sdk_dynamodb::{
 use aws_sdk_s3::Client as S3Client;
 use futures::{stream, StreamExt, TryStreamExt};
 use hex::ToHex;
-use pallas::interop::utxorpc::{LedgerContext, Mapper};
+use pallas::interop::utxorpc::{v1::Mapper, LedgerContext};
 use serde::{Deserialize, Serialize};
 use serde_bytes_base64::Bytes;
 use serde_dynamo::{to_attribute_value, to_item};
 use tracing::trace;
-use utxorpc::spec::cardano::{asset::Quantity, Block, Datum as utxorpcDatum, Redeemer, Script};
+use utxorpc_spec::utxorpc::v1::cardano::{
+    Block, BlockBody, Collateral, Datum as utxorpcDatum, Redeemer, Script, TxCommon,
+};
 
 use crate::utils::{bigint_to_string, bigint_to_u64, elapsed};
 
@@ -75,11 +77,57 @@ pub struct TxOutput {
     /// Plutus data associated with the output.
     pub datum: Option<Datum>,
     /// Script associated with the output.
+    #[serde(default, with = "lookup_script")]
     pub script: Option<Script>,
 }
 
-impl From<utxorpc::spec::cardano::TxOutput> for TxOutput {
-    fn from(value: utxorpc::spec::cardano::TxOutput) -> Self {
+// RPC v1 uses the renamed native pubkey field; the lookup table does not.
+// Adapt only this spelling, including nested native scripts. Converting through
+// v1alpha protobuf types would silently discard new Dijkstra guard scripts.
+mod lookup_script {
+    use super::Script;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde_json::Value;
+
+    fn rename_pubkeys(value: &mut Value, from: &str, to: &str) {
+        match value {
+            Value::Object(fields) => {
+                if let Some(hash) = fields.remove(from) {
+                    fields.insert(to.to_string(), hash);
+                }
+                for value in fields.values_mut() {
+                    rename_pubkeys(value, from, to);
+                }
+            }
+            Value::Array(items) => {
+                for value in items {
+                    rename_pubkeys(value, from, to);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn serialize<S: Serializer>(
+        script: &Option<Script>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut value = serde_json::to_value(script).map_err(serde::ser::Error::custom)?;
+        rename_pubkeys(&mut value, "scriptPubkeyHash", "scriptPubkey");
+        value.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Script>, D::Error> {
+        let mut value = Value::deserialize(deserializer)?;
+        rename_pubkeys(&mut value, "scriptPubkey", "scriptPubkeyHash");
+        serde_json::from_value(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl From<utxorpc_spec::utxorpc::v1::cardano::TxOutput> for TxOutput {
+    fn from(value: utxorpc_spec::utxorpc::v1::cardano::TxOutput) -> Self {
         TxOutput {
             address: value.address.to_vec().into(),
             coin: value
@@ -92,23 +140,28 @@ impl From<utxorpc::spec::cardano::TxOutput> for TxOutput {
                 .into_iter()
                 .map(|m| Multiasset {
                     policy_id: m.policy_id.to_vec().into(),
-                    redeemer: m.redeemer,
+                    // v1 puts redeemers in the witness set, not output assets.
+                    // Retain the stored field for existing lookup readers.
+                    redeemer: None,
                     assets: m
                         .assets
                         .into_iter()
                         .map(|a| Asset {
                             name: a.name.to_vec().into(),
-                            output_coin: match a.quantity {
-                                Some(Quantity::OutputCoin(o)) => bigint_to_string(&o),
-                                _ => "0".to_string(),
-                            },
+                            output_coin: a
+                                .quantity
+                                .as_ref()
+                                .map(bigint_to_string)
+                                .unwrap_or_else(|| "0".to_string()),
                         })
                         .collect(),
                 })
                 .collect(),
+            // Hash-only datums have no inline CBOR. Preserve the existing raw
+            // byte representation (empty for hash-only datums) for lookup readers.
             datum: value
                 .datum
-                .map(|d| Datum::Raw(d.original_cbor.to_vec().into())),
+                .map(|d| Datum::Raw(d.original_cbor.unwrap_or_default().to_vec().into())),
             script: value.script,
         }
     }
@@ -124,6 +177,46 @@ pub struct TxRef {
     pub successful: bool,
     pub utxos: Vec<TxOutput>,
     pub collateral_out: Option<TxOutput>,
+}
+
+struct IndexedTransaction<'a> {
+    common: &'a TxCommon,
+    successful: bool,
+    collateral: Option<&'a Collateral>,
+}
+
+/// Parent rows are retained even for failed transactions (for collateral lookup).
+/// Sub-transactions have their own IDs/outputs, but only take effect if the
+/// enclosing parent succeeds. Use the same row selection for apply and rollback.
+fn indexed_transactions(body: &BlockBody) -> Result<Vec<IndexedTransaction<'_>>> {
+    let mut seen = HashSet::new();
+    let mut rows = Vec::new();
+    for parent in &body.tx {
+        let common = parent
+            .common
+            .as_ref()
+            .context("expected transaction to have common fields")?;
+        let parent_row = IndexedTransaction {
+            common,
+            successful: parent.successful,
+            collateral: parent.collateral.as_ref(),
+        };
+        let children = parent
+            .sub_transactions
+            .iter()
+            .filter(|_| parent.successful)
+            .map(|common| IndexedTransaction {
+                common,
+                successful: true,
+                collateral: None,
+            });
+        for row in std::iter::once(parent_row).chain(children) {
+            if seen.insert(row.common.hash.clone()) {
+                rows.push(row);
+            }
+        }
+    }
+    Ok(rows)
 }
 
 fn block_hash_key(hash: impl ToHex) -> String {
@@ -172,27 +265,28 @@ impl Archive {
         items.push(to_item(height_ref)?);
         let body = block
             .body
-            .clone()
+            .as_ref()
             .context("expected block to have a body")?;
-        // Leios endorser blocks can carry the same transaction more than once,
-        // and BatchWriteItem refuses duplicate keys in one request. A repeated
-        // tx hash means an identical body, so the first pointer is kept.
-        let mut seen = HashSet::new();
-        for tx in body.tx {
-            if !seen.insert(tx.hash.clone()) {
-                continue;
-            }
+        // Expand and deduplicate before batching: DynamoDB rejects repeated keys
+        // within a BatchWriteItem request, including repeated sub-transactions.
+        for tx in indexed_transactions(body)? {
             let tx_ref = TxRef {
-                pk: format!("tx:{}", tx.hash.encode_hex::<String>()),
+                pk: format!("tx:{}", tx.common.hash.encode_hex::<String>()),
                 sk: "tx".to_string(),
                 block: header.hash.encode_hex(),
                 location: location.clone(),
                 in_chain: true,
-                utxos: tx.outputs.into_iter().map(|o| o.into()).collect(),
+                utxos: tx
+                    .common
+                    .outputs
+                    .iter()
+                    .cloned()
+                    .map(|o| o.into())
+                    .collect(),
                 successful: tx.successful,
                 collateral_out: tx
                     .collateral
-                    .and_then(|c| c.collateral_return.map(|o| o.into())),
+                    .and_then(|c| c.collateral_return.clone().map(|o| o.into())),
             };
             items.push(to_item(tx_ref)?);
         }
@@ -232,16 +326,21 @@ impl Archive {
     }
 
     pub async fn unsave(&self, block: &Block) -> Result<()> {
-        let block = block.body.clone().context("expected block body")?;
+        let body = block.body.as_ref().context("expected block body")?;
+        let transactions = indexed_transactions(body)?;
+        // Count rows after expansion/deduplication, not top-level transactions.
         // DynamoDB allows at most 100 actions per transaction.
-        for chunk in block.tx.chunks(100) {
+        for chunk in transactions.chunks(100) {
             let mut ddb_tx = self.dynamo.transact_write_items();
             for tx in chunk {
                 let tx_update = Update::builder()
                     .table_name(self.table_name.clone())
                     .key(
                         "pk",
-                        to_attribute_value(format!("tx:{}", tx.hash.encode_hex::<String>()))?,
+                        to_attribute_value(format!(
+                            "tx:{}",
+                            tx.common.hash.encode_hex::<String>()
+                        ))?,
                     )
                     .key("sk", to_attribute_value("tx")?)
                     .update_expression("SET in_chain = :in_chain")

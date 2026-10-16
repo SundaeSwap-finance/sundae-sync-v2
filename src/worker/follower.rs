@@ -1,53 +1,68 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bytes::Bytes;
+use tonic::{
+    transport::{ClientTlsConfig, Endpoint},
+    Request, Streaming,
+};
 use tracing::warn;
-use utxorpc::{
-    spec::{
-        cardano::{Block, BlockHeader},
-        sync::BlockRef,
+use utxorpc_spec::utxorpc::v1::{
+    cardano::{Block, BlockHeader},
+    sync::{
+        any_chain_block::Chain, follow_tip_response::Action,
+        sync_service_client::SyncServiceClient, BlockRef, FollowTipRequest, FollowTipResponse,
     },
-    Cardano, CardanoSyncClient, ClientBuilder, LiveTip, TipEvent,
 };
 
 pub struct Follower {
-    tip: LiveTip<Cardano>,
+    tip: Streaming<FollowTipResponse>,
 }
 
 impl Follower {
-    pub async fn new(
-        uri: &String,
-        api_key: &Option<String>,
-        points: Vec<BlockRef>,
-    ) -> Result<Self> {
-        let mut client_builder = ClientBuilder::new().uri(uri)?;
+    pub async fn new(uri: &str, api_key: &Option<String>, points: Vec<BlockRef>) -> Result<Self> {
+        let endpoint = Endpoint::from_shared(uri.to_owned())?
+            .tls_config(ClientTlsConfig::new().with_enabled_roots())?;
+        let mut client =
+            SyncServiceClient::new(endpoint.connect_lazy()).max_decoding_message_size(usize::MAX);
+        let mut request = Request::new(FollowTipRequest {
+            intersect: points,
+            field_mask: None,
+        });
         if let Some(api_key) = api_key {
-            client_builder = client_builder.metadata("dmtr-api-key", api_key)?;
+            request.metadata_mut().insert(
+                "dmtr-api-key",
+                api_key
+                    .parse()
+                    .context("invalid UTxO RPC API key metadata")?,
+            );
         }
-        let mut client = client_builder.build::<CardanoSyncClient>().await;
         Ok(Self {
-            tip: client.follow_tip(points).await?,
+            tip: client.follow_tip(request).await?.into_inner(),
         })
     }
 
     pub async fn next_event(&mut self) -> Result<(bool, Bytes, Block, BlockHeader)> {
         let (bytes, block, roll_forward) = loop {
-            let event = self.tip.event().await?;
-
-            match &event {
-                Some(TipEvent::Apply(block)) | Some(TipEvent::Undo(block)) => {
-                    let bytes = block.native.clone();
-                    let block = block.parsed.clone().expect("must include block");
-
-                    break (bytes, block, matches!(event, Some(TipEvent::Apply(_))));
+            let event = self.tip.message().await?.context("Stream closed")?;
+            let action = event.action.context("missing follow-tip action")?;
+            let roll_forward = matches!(action, Action::Apply(_));
+            match action {
+                Action::Apply(block) | Action::Undo(block) => {
+                    let Some(Chain::Cardano(parsed)) = block.chain else {
+                        anyhow::bail!("expected parsed Cardano block");
+                    };
+                    break (block.native_bytes, parsed, roll_forward);
                 }
-                Some(TipEvent::Reset(b)) => {
+                Action::Reset(b) => {
                     warn!("Upstream requested reset to {:?}", b);
                     continue;
                 }
-                None => return Err(anyhow::anyhow!("Stream closed")),
             };
         };
-        let header = block.header.as_ref().expect("must include header").clone();
+        let header = block
+            .header
+            .as_ref()
+            .context("must include header")?
+            .clone();
 
         Ok((roll_forward, bytes, block, header))
     }

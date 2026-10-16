@@ -5,7 +5,7 @@ use aws_sdk_kinesis::Client as KinesisClient;
 use hex::ToHex;
 use tokio::{select, sync::watch::Receiver, time::sleep};
 use tracing::{info, trace, warn};
-use utxorpc::spec::sync::BlockRef;
+use utxorpc_spec::utxorpc::v1::sync::BlockRef;
 
 use super::Follower;
 use crate::{
