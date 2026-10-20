@@ -23,6 +23,7 @@ async fn create_test_destination(
         sequence_number: Some("seq-0".to_string()),
         last_seen_point: initial_point.clone(),
         recovery_points: vec![initial_point],
+        published_points: vec![],
         enabled: true,
         skip_repair: true,
     };
@@ -39,9 +40,13 @@ async fn create_test_destination(
 }
 
 fn make_point(index: u64) -> BlockRef {
+    make_point_with_hash(index, &format!("hash-{}", index))
+}
+
+fn make_point_with_hash(index: u64, hash: &str) -> BlockRef {
     BlockRef {
         slot: index,
-        hash: Bytes::from(format!("hash-{}", index).as_bytes().to_vec()),
+        hash: Bytes::from(hash.as_bytes().to_vec()),
         timestamp: 0,
         height: 0,
     }
@@ -59,6 +64,7 @@ async fn test_destination_commit_succeeds_on_correct_sequence() -> Result<()> {
         &table,
         make_point(101),
         Some("seq-101".to_string()),
+        true,
     )
     .await?;
 
@@ -83,6 +89,7 @@ async fn test_destination_commit_prevents_split_brain() -> Result<()> {
             &table,
             make_point(101),
             Some("seq-101".to_string()),
+            true,
         )
         .await;
 
@@ -93,6 +100,7 @@ async fn test_destination_commit_prevents_split_brain() -> Result<()> {
             &table,
             make_point(102),
             Some("seq-102".to_string()),
+            true,
         )
         .await;
 
@@ -140,6 +148,7 @@ async fn test_destination_commit_detects_zombie_worker() -> Result<()> {
             &table,
             make_point(101),
             Some("seq-101".to_string()),
+            true,
         )
         .await?;
 
@@ -148,6 +157,7 @@ async fn test_destination_commit_detects_zombie_worker() -> Result<()> {
         pk: "dest-1".to_string(),
         last_seen_point: make_point(100), // Stale!
         recovery_points: vec![make_point(100)],
+        published_points: vec![make_point(100)],
         stream_arn: "arn:aws:kinesis:us-east-1:123456789:stream/test".to_string(),
         shard_id: "shard-0".to_string(),
         filter: None,
@@ -162,6 +172,7 @@ async fn test_destination_commit_detects_zombie_worker() -> Result<()> {
             &table,
             make_point(101),
             Some("seq-zombie".to_string()),
+            true,
         )
         .await;
 
@@ -191,8 +202,14 @@ async fn test_destination_recovery_points_rotation() -> Result<()> {
 
     // Commit 20 points
     for i in 101..=120 {
-        dest.commit(&dynamo, &table, make_point(i), Some(format!("seq-{}", i)))
-            .await?;
+        dest.commit(
+            &dynamo,
+            &table,
+            make_point(i),
+            Some(format!("seq-{}", i)),
+            true,
+        )
+        .await?;
     }
 
     // Should have exactly 15 recovery points
@@ -231,6 +248,7 @@ async fn test_concurrent_destination_commits() -> Result<()> {
                 pk: "dest-1".to_string(),
                 last_seen_point: make_point(100),
                 recovery_points: vec![make_point(100)],
+                published_points: vec![make_point(100)],
                 stream_arn: "arn:aws:kinesis:us-east-1:123456789:stream/test".to_string(),
                 shard_id: "shard-0".to_string(),
                 filter: None,
@@ -239,10 +257,16 @@ async fn test_concurrent_destination_commits() -> Result<()> {
                 skip_repair: true,
             };
 
-            dest.commit(&dynamo, &table, make_point(i), Some(format!("seq-{}", i)))
-                .await
-                .ok()
-                .map(|_| i)
+            dest.commit(
+                &dynamo,
+                &table,
+                make_point(i),
+                Some(format!("seq-{}", i)),
+                true,
+            )
+            .await
+            .ok()
+            .map(|_| i)
         }));
     }
 
@@ -302,13 +326,15 @@ async fn test_destination_commit_updates_sequence_number() -> Result<()> {
         &table,
         make_point(101),
         Some("new-seq-101".to_string()),
+        false,
     )
     .await?;
 
     assert_eq!(dest.sequence_number, Some("new-seq-101".to_string()));
 
     // Commit with None sequence number
-    dest.commit(&dynamo, &table, make_point(102), None).await?;
+    dest.commit(&dynamo, &table, make_point(102), None, true)
+        .await?;
 
     assert_eq!(dest.sequence_number, None);
 
@@ -329,6 +355,7 @@ async fn test_destination_commit_adds_to_recovery_points() -> Result<()> {
         &table,
         make_point(101),
         Some("seq-101".to_string()),
+        false,
     )
     .await?;
 
@@ -337,6 +364,69 @@ async fn test_destination_commit_adds_to_recovery_points() -> Result<()> {
 
     // Last recovery point should be the newly committed point
     assert_eq!(dest.recovery_points.last().unwrap().slot, 101);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_destination_commit_updates_published_points() -> Result<()> {
+    let (dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
+
+    let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
+
+    let initial_published_count = dest.published_points.len();
+
+    // Commit a new point
+    dest.commit(
+        &dynamo,
+        &table,
+        make_point(101),
+        Some("seq-101".to_string()),
+        true,
+    )
+    .await?;
+
+    // published points should have grown by 1
+    assert_eq!(dest.published_points.len(), initial_published_count + 1);
+
+    // Last published point should be the newly committed point
+    assert_eq!(dest.published_points.last().unwrap().slot, 101);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_destination_commit_tracks_rollbacks() -> Result<()> {
+    let (dynamo, table) = common::setup_dynamodb(common::TableType::Destination).await?;
+
+    let mut dest = create_test_destination(&dynamo, &table, "dest-1", make_point(100)).await?;
+    // Commit a new point
+    dest.commit(
+        &dynamo,
+        &table,
+        make_point(101),
+        Some("seq-101".to_string()),
+        true,
+    )
+    .await?;
+
+    let initial_published_count = dest.published_points.len();
+
+    // Commit another new point
+    dest.commit(
+        &dynamo,
+        &table,
+        make_point_with_hash(101, "other 101"),
+        Some("seq-101".to_string()),
+        true,
+    )
+    .await?;
+
+    // Published points should have grown by 1
+    assert_eq!(dest.published_points.len(), initial_published_count);
+
+    // Last published point should be the newly committed point
+    assert_eq!(dest.published_points.last().unwrap().slot, 101);
 
     Ok(())
 }
