@@ -10,6 +10,26 @@ use tokio::sync::watch::Receiver;
 use utxorpc::spec::{cardano::Block, sync::BlockRef};
 
 use super::Destination;
+use tracing::warn;
+
+/// Whether a destination should receive this broadcast.
+///
+/// A destination whose last_seen slot is already past this advance is
+/// skipped so catch-up of a lagging peer does not rewind it. Slot is not
+/// chain position: a one-block Praos fork can replace slot N+1 with slot N,
+/// so a message that undoes the destination's current point is still sent.
+pub(crate) fn destination_should_receive(last_seen: &BlockRef, message: &BroadcastMessage) -> bool {
+    if last_seen.slot <= message.advance.slot {
+        return true;
+    }
+    message.undo.iter().any(|u| u.hash == last_seen.hash)
+}
+
+/// Undo records ride the next roll-forward. Clearing the in-memory stack
+/// after a broadcast that wrote to nobody drops those undos forever.
+pub(crate) fn should_clear_undo_stack(written_destinations: &[String]) -> bool {
+    !written_destinations.is_empty()
+}
 
 pub struct Broadcaster {
     pub destinations: Vec<Destination>,
@@ -64,8 +84,16 @@ impl Broadcaster {
         let mut destinations = vec![];
         // For each destination
         for destination in &mut self.destinations {
-            // Ignore this destination if we're further back in the chain
-            if destination.last_seen_point.slot > message.advance.slot {
+            if !destination_should_receive(&destination.last_seen_point, &message) {
+                warn!(
+                    dest = %destination.pk,
+                    last_seen_slot = destination.last_seen_point.slot,
+                    last_seen_hash = hex::encode(&destination.last_seen_point.hash),
+                    advance_slot = message.advance.slot,
+                    advance_hash = hex::encode(&message.advance.hash),
+                    undo_count = message.undo.len(),
+                    "skipping destination: last_seen is ahead of advance and undo does not include last_seen"
+                );
                 continue;
             }
             // Check if we *should* send to this destination,
@@ -147,5 +175,77 @@ impl Broadcaster {
                 .await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+
+    fn point(slot: u64, hash: u8) -> BlockRef {
+        BlockRef {
+            slot,
+            hash: Bytes::from(vec![hash]),
+            height: 0,
+            timestamp: 0,
+        }
+    }
+
+    fn message(undo: Vec<BlockRef>, advance: BlockRef) -> BroadcastMessage {
+        BroadcastMessage { undo, advance }
+    }
+
+    #[test]
+    fn receives_when_advance_slot_is_ahead() {
+        let last_seen = point(483, 0xaa);
+        let msg = message(vec![], point(484, 0xbb));
+        assert!(destination_should_receive(&last_seen, &msg));
+    }
+
+    #[test]
+    fn receives_when_advance_slot_ties_last_seen() {
+        let last_seen = point(484, 0xaa);
+        let msg = message(vec![], point(484, 0xbb));
+        assert!(destination_should_receive(&last_seen, &msg));
+    }
+
+    #[test]
+    fn skips_catch_up_when_already_ahead_and_undo_is_empty() {
+        let last_seen = point(1000, 0xaa);
+        let msg = message(vec![], point(401, 0xbb));
+        assert!(!destination_should_receive(&last_seen, &msg));
+    }
+
+    #[test]
+    fn receives_one_block_fork_when_canonical_slot_is_lower() {
+        // Doomed block at 484 already committed; canonical winner is 483.
+        // Slot-only "already ahead" would drop the undo of 484.
+        let doomed = point(484, 0xaa);
+        let canonical = point(483, 0xbb);
+        let msg = message(vec![doomed.clone()], canonical);
+        assert!(destination_should_receive(&doomed, &msg));
+    }
+
+    #[test]
+    fn skips_when_lower_slot_advance_does_not_undo_last_seen() {
+        let last_seen = point(1000, 0xcc);
+        let doomed = point(484, 0xaa);
+        let canonical = point(483, 0xbb);
+        let msg = message(vec![doomed], canonical);
+        assert!(!destination_should_receive(&last_seen, &msg));
+    }
+
+    #[test]
+    fn skips_empty_undo_when_advance_slot_goes_backwards() {
+        let last_seen = point(484, 0xaa);
+        let msg = message(vec![], point(483, 0xbb));
+        assert!(!destination_should_receive(&last_seen, &msg));
+    }
+
+    #[test]
+    fn clears_undo_stack_only_after_a_destination_was_written() {
+        assert!(should_clear_undo_stack(&["all".to_string()]));
+        assert!(!should_clear_undo_stack(&[]));
     }
 }
