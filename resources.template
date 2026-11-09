@@ -17,6 +17,11 @@ Mappings:
       InstanceType: t2.medium
       SubnetA: subnet-08fe76b5c6dc035d0
       SubnetB: subnet-0797a471ba5029682
+    musashi:
+      Image: 'ami-0d9f51894610e8834'
+      InstanceType: t2.medium
+      SubnetA: subnet-08fe76b5c6dc035d0
+      SubnetB: subnet-0797a471ba5029682
     mainnet:
       Image: 'ami-0189fd164c79c987a'
       InstanceType: t2.medium
