@@ -299,6 +299,22 @@ mod tests {
         );
     }
 
+    /// A slot battle the earlier slot wins: the winner's slot is below the
+    /// loser's, so the advance is "behind" what the destination last saw.
+    /// The undo and the winner must still go out.
+    #[test]
+    fn next_action_should_roll_back_to_a_winner_with_an_earlier_slot() {
+        let destination = test_destination(make_point(101), vec![make_point(98), make_point(101)]);
+        let message = BroadcastMessage {
+            undo: vec![make_point(101)],
+            advance: make_point_with_hash(100, "winner at 100"),
+        };
+        assert_eq!(
+            Broadcaster::next_action(&destination, &message, true),
+            BroadcastAction::BroadcastAndCommit(message),
+        );
+    }
+
     #[test]
     fn next_action_should_roll_back_even_on_filtered_messages() {
         let destination = test_destination(make_point(202), vec![make_point(200), make_point(202)]);
