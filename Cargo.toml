@@ -17,11 +17,11 @@ clap = { version = "4.5", features = ["derive", "env"] }
 hex = "0.4.3"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-utxorpc = "0.13"
+utxorpc = "0.14"
 aws-config = "1.5.4"
-aws-sdk-dynamodb = "1.38.0"
-aws-sdk-s3 = "1.41.0"
-aws-sdk-kinesis = "1.35.0"
+aws-sdk-dynamodb = { version = "1.38.0", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-s3 = { version = "1.41.0", default-features = false, features = ["default-https-client", "rt-tokio", "sigv4a", "http-1x"] }
+aws-sdk-kinesis = { version = "1.35.0", default-features = false, features = ["default-https-client", "rt-tokio"] }
 serde = "1.0.204"
 serde_json = "1.0.120"
 uuid = { version = "1.10.0", features = ["v4", "fast-rng"] }
@@ -37,11 +37,11 @@ serde_bytes = "0.11.15"
 serde_bytes_base64 = "0.1.1"
 
 [dev-dependencies]
-aws-smithy-http-client = { version = "1.1.11", features = ["test-util"] }
-aws-smithy-types = "1.4.5"
+aws-smithy-http-client = { version = "1.5.3", features = ["test-util"] }
+aws-smithy-types = "1.9.4"
 http = "1"
-testcontainers = "0.26.0"
-testcontainers-modules = { version = "0.14.0", features = ["dynamodb"] }
+testcontainers = "0.27.0"
+testcontainers-modules = { version = "0.15.0", features = ["dynamodb"] }
 
 # The profile that 'cargo dist' will build with
 [profile.dist]
