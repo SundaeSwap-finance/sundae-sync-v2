@@ -428,6 +428,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_destination_reads_row_without_published_points() {
+        let point = |s: &str| AttributeValue::S(s.to_string());
+        let item = std::collections::HashMap::from([
+            ("pk".to_string(), point("test-dest")),
+            (
+                "stream_arn".to_string(),
+                point("arn:aws:kinesis:us-east-1:123456789:stream/test"),
+            ),
+            ("shard_id".to_string(), point("shard-0")),
+            ("sequence_number".to_string(), point("12345")),
+            ("last_seen_point".to_string(), point("3328671/aabbccdd")),
+            (
+                "recovery_points".to_string(),
+                AttributeValue::L(vec![point("3328669/11223344"), point("3328671/aabbccdd")]),
+            ),
+            ("enabled".to_string(), AttributeValue::Bool(true)),
+        ]);
+
+        let dest: Destination = serde_dynamo::aws_sdk_dynamodb_1::from_item(item).unwrap();
+
+        assert_eq!(dest.last_seen_point.slot, 3328671);
+        assert_eq!(dest.recovery_points.len(), 2);
+        assert!(dest.published_points.is_empty());
+    }
+
     // Edge case tests for point serialization
 
     #[test]
