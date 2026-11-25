@@ -27,6 +27,12 @@ pub struct Destination {
         deserialize_with = "deserialize_points"
     )]
     pub recovery_points: Vec<BlockRef>,
+    #[serde(
+        serialize_with = "serialize_points",
+        deserialize_with = "deserialize_points",
+        default
+    )]
+    pub published_points: Vec<BlockRef>,
     pub enabled: bool,
     #[serde(default)]
     pub skip_repair: bool,
@@ -40,6 +46,7 @@ impl Destination {
         table: &String,
         point: BlockRef,
         seq_num: Option<String>,
+        published: bool,
     ) -> Result<()> {
         // Rotate the point into the list of 15 rollback points
         // TODO: make this more sophisticated, so that we stagger points further and further back
@@ -51,8 +58,26 @@ impl Destination {
         if self.recovery_points.len() > 15 {
             self.recovery_points.remove(0);
         }
+        if published {
+            while self
+                .published_points
+                .last()
+                .is_some_and(|p| p.slot >= point.slot)
+            {
+                self.published_points.pop();
+            }
+            self.published_points.push(point.clone());
+            if self.published_points.len() > 15 {
+                self.published_points.remove(0);
+            }
+        }
         let recovery_points = self
             .recovery_points
+            .iter()
+            .map(|p| AttributeValue::S(point_to_string(p)))
+            .collect();
+        let published_points = self
+            .published_points
             .iter()
             .map(|p| AttributeValue::S(point_to_string(p)))
             .collect();
@@ -66,7 +91,7 @@ impl Destination {
             .key("pk", AttributeValue::S(self.pk.clone()))
             .condition_expression("last_seen_point = :last_point")
             .update_expression(
-                "SET last_seen_point = :new_point, sequence_number = :seq, recovery_points = :rotated_points",
+                "SET last_seen_point = :new_point, sequence_number = :seq, recovery_points = :rotated_points, published_points = :published_points",
             )
             .expression_attribute_values(
                 ":last_point",
@@ -75,6 +100,7 @@ impl Destination {
             .expression_attribute_values(":seq", seq_num.map_or(AttributeValue::Null(true), AttributeValue::S))
             .expression_attribute_values(":new_point", AttributeValue::S(point_to_string(&point)))
             .expression_attribute_values(":rotated_points", AttributeValue::L(recovery_points))
+            .expression_attribute_values(":published_points", AttributeValue::L(published_points))
             .send()
             .await
             .map_err(|e| {
@@ -175,7 +201,7 @@ impl Destination {
 
                 // Try to commit with conditional check - this prevents zombie worker races
                 match self
-                    .commit(&dynamo, &table, point.clone(), Some(seq_no))
+                    .commit(&dynamo, &table, point.clone(), Some(seq_no), true)
                     .await
                 {
                     Ok(_) => {
@@ -368,6 +394,20 @@ mod tests {
                     timestamp: 0,
                 },
             ],
+            published_points: vec![
+                BlockRef {
+                    slot: 90,
+                    hash: bytes::Bytes::from(vec![0x11, 0x22, 0x33, 0x44]),
+                    height: 0,
+                    timestamp: 0,
+                },
+                BlockRef {
+                    slot: 95,
+                    hash: bytes::Bytes::from(vec![0x55, 0x66, 0x77, 0x88]),
+                    height: 0,
+                    timestamp: 0,
+                },
+            ],
             enabled: true,
             skip_repair: false,
         };
@@ -386,6 +426,32 @@ mod tests {
             dest.recovery_points[0].slot,
             deserialized.recovery_points[0].slot
         );
+    }
+
+    #[test]
+    fn test_destination_reads_row_without_published_points() {
+        let point = |s: &str| AttributeValue::S(s.to_string());
+        let item = std::collections::HashMap::from([
+            ("pk".to_string(), point("test-dest")),
+            (
+                "stream_arn".to_string(),
+                point("arn:aws:kinesis:us-east-1:123456789:stream/test"),
+            ),
+            ("shard_id".to_string(), point("shard-0")),
+            ("sequence_number".to_string(), point("12345")),
+            ("last_seen_point".to_string(), point("3328671/aabbccdd")),
+            (
+                "recovery_points".to_string(),
+                AttributeValue::L(vec![point("3328669/11223344"), point("3328671/aabbccdd")]),
+            ),
+            ("enabled".to_string(), AttributeValue::Bool(true)),
+        ]);
+
+        let dest: Destination = serde_dynamo::aws_sdk_dynamodb_1::from_item(item).unwrap();
+
+        assert_eq!(dest.last_seen_point.slot, 3328671);
+        assert_eq!(dest.recovery_points.len(), 2);
+        assert!(dest.published_points.is_empty());
     }
 
     // Edge case tests for point serialization
