@@ -17,6 +17,7 @@ use lock::LockThread;
 
 use anyhow::Result;
 use args::Args;
+use broadcast::broadcast::KINESIS_PUT_TIMEOUT;
 use tokio::{signal, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -66,6 +67,14 @@ async fn main() -> Result<()> {
             dynamo: dynamo_client.clone(),
             table: args.lock_table,
         };
+        // A Kinesis write that starts before the worker deadline must end
+        // before the lock expires, or a worker that lost the lock could still
+        // publish.
+        anyhow::ensure!(
+            lock_thread.lock_duration - lock_thread.lock_renew_freq - lock_thread.lock_stall_window
+                > KINESIS_PUT_TIMEOUT,
+            "the Kinesis write timeout must be shorter than the lock safety margin"
+        );
 
         let archive = Archive {
             s3: s3_client,

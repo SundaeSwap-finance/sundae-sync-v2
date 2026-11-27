@@ -244,8 +244,16 @@ impl Destination {
     }
 }
 
+/// Points are stored as `slot/hash/height`. Points written before the height
+/// was stored are `slot/hash`; they load with height 0 (unknown) and are
+/// written back unchanged, so the conditional commit still matches them.
 pub fn point_to_string(point: &BlockRef) -> String {
-    format!("{}/{}", point.slot, point.hash.encode_hex::<String>())
+    let hash = point.hash.encode_hex::<String>();
+    if point.height == 0 {
+        format!("{}/{}", point.slot, hash)
+    } else {
+        format!("{}/{}/{}", point.slot, hash, point.height)
+    }
 }
 pub fn serialize_point<S>(point: &BlockRef, serializer: S) -> std::result::Result<S::Ok, S::Error>
 where
@@ -269,15 +277,19 @@ where
 
 pub fn string_to_point(s: String) -> Result<BlockRef> {
     let parts: Vec<_> = s.split('/').collect();
-    if parts.len() != 2 {
-        bail!("invalid point: multiple slashes!");
+    if parts.len() != 2 && parts.len() != 3 {
+        bail!("invalid point: expected slot/hash or slot/hash/height");
     }
     let slot = parts[0].parse()?;
     let hash = Bytes::from_iter(hex::decode(parts[1])?);
+    let height = match parts.get(2) {
+        Some(height) => height.parse()?,
+        None => 0,
+    };
     Ok(BlockRef {
         slot,
         hash,
-        height: 0,
+        height,
         timestamp: 0,
     })
 }
@@ -461,9 +473,34 @@ mod tests {
 
     #[test]
     fn test_string_to_point_with_multiple_slashes() {
-        // The current implementation will fail on this - it assumes exactly one slash
+        // The third part is the height, and must be a number
         let result = string_to_point("12345/dead/beef".to_string());
         assert!(result.is_err());
+        let result = string_to_point("12345/dead/7/8".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_point_roundtrip_with_height() {
+        let point = BlockRef {
+            slot: 12345,
+            hash: bytes::Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]),
+            height: 678,
+            timestamp: 0,
+        };
+        let string = point_to_string(&point);
+        assert_eq!(string, "12345/deadbeef/678");
+        assert_eq!(string_to_point(string).unwrap(), point);
+    }
+
+    #[test]
+    fn test_point_without_height_is_written_back_unchanged() {
+        // A point stored before heights were stored must keep its string form,
+        // or the conditional commit against it would never match.
+        let stored = "12345/deadbeef".to_string();
+        let point = string_to_point(stored.clone()).unwrap();
+        assert_eq!(point.height, 0);
+        assert_eq!(point_to_string(&point), stored);
     }
 
     #[test]
