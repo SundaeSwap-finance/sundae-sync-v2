@@ -2,6 +2,7 @@ pub mod archive;
 pub mod args;
 pub mod broadcast;
 pub mod lock;
+pub mod metrics;
 pub mod utils;
 pub mod worker;
 
@@ -17,6 +18,7 @@ use lock::LockThread;
 
 use anyhow::Result;
 use args::Args;
+use broadcast::broadcast::KINESIS_PUT_TIMEOUT;
 use tokio::{signal, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -44,6 +46,7 @@ async fn main() -> Result<()> {
     let s3_client = S3Client::new(&config);
     let dynamo_client = DynamoClient::new(&config);
     let kinesis_client = KinesisClient::new(&config);
+    let cloudwatch_client = aws_sdk_cloudwatch::Client::new(&config);
 
     {
         // Cancel our worker thread once we receive a Ctrl+C
@@ -66,6 +69,14 @@ async fn main() -> Result<()> {
             dynamo: dynamo_client.clone(),
             table: args.lock_table,
         };
+        // A Kinesis write that starts before the worker deadline must end
+        // before the lock expires, or a worker that lost the lock could still
+        // publish.
+        anyhow::ensure!(
+            lock_thread.lock_duration - lock_thread.lock_renew_freq - lock_thread.lock_stall_window
+                > KINESIS_PUT_TIMEOUT,
+            "the Kinesis write timeout must be shorter than the lock safety margin"
+        );
 
         let archive = Archive {
             s3: s3_client,
@@ -77,6 +88,7 @@ async fn main() -> Result<()> {
         let worker = Worker {
             dynamo: dynamo_client.clone(),
             kinesis: kinesis_client.clone(),
+            cloudwatch: cloudwatch_client,
             uri: args.utxo_rpc_url.unwrap(),
             api_key: args.utxo_rpc_api_key,
             table: args.destination_table,

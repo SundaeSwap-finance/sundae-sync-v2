@@ -159,6 +159,13 @@ Resources:
                           - !GetAtt LookupTable.Arn
                       - Effect: Allow
                         Action:
+                          - 'cloudwatch:PutMetricData'
+                        Resource: '*'
+                        Condition:
+                          StringEquals:
+                            'cloudwatch:namespace': 'SundaeSync'
+                      - Effect: Allow
+                        Action:
                           - 's3:List*'
                           - 's3:Get*'
                           - 's3:PutObject'
@@ -260,6 +267,34 @@ Resources:
                   Value: !Sub '${Env}-sundae-sync-v2-2b'
 
     # ---- Monitoring Alarms ----
+
+    # The producer publishes BlocksAdvanced once a minute: the number of blocks
+    # that moved a destination's cursor. A producer whose upstream node is
+    # stuck receives the same block over and over and publishes nothing, and
+    # a dead producer publishes no metric at all, so missing data is
+    # breaching. On preprod in September 2026 nothing advanced for three days
+    # and no alarm said so.
+    ProducerNotAdvancingAlarm:
+        Condition: HasAlerts
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+            AlarmName: !Sub '${Env}-sync-producer-not-advancing'
+            AlarmDescription: 'Sync v2 producer has published no new block for 10 minutes: upstream node stuck or producer down'
+            Namespace: SundaeSync
+            MetricName: BlocksAdvanced
+            Dimensions:
+                - Name: Table
+                  Value: !Sub '${Env}-sundae-sync-v2--destination'
+            Statistic: Sum
+            Period: 300
+            EvaluationPeriods: 2
+            Threshold: 1
+            ComparisonOperator: LessThanThreshold
+            TreatMissingData: breaching
+            AlarmActions:
+                - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${Env}-sundae-alerts-critical'
+            OKActions:
+                - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${Env}-sundae-alerts-critical'
 
     KinesisIteratorAgeAlarm:
         Condition: HasAlerts
