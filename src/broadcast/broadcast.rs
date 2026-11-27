@@ -19,6 +19,19 @@ use super::{destination::point_to_string, Destination};
 /// expiration; this timeout must stay below that margin (main.rs checks it).
 pub const KINESIS_PUT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// What one broadcast did: which destinations received the message, and
+/// whether it moved any destination's cursor at all.
+///
+/// The upstream sends the block at the cursor again after every restart.
+/// When the upstream node is stuck, that block is the only thing it sends:
+/// on 2026-09-16 preprod received one block every ~35s for three days.
+/// Nothing advances then, and `advanced` is how the worker counts that.
+#[derive(Debug)]
+pub struct Broadcast {
+    pub published_to: Vec<String>,
+    pub advanced: bool,
+}
+
 pub struct Broadcaster {
     pub destinations: Vec<Destination>,
     pub kinesis: KinesisClient,
@@ -213,8 +226,9 @@ impl Broadcaster {
         &mut self,
         block: Block,
         message: BroadcastMessage,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Broadcast> {
         let mut destinations = vec![];
+        let mut advanced = false;
         // For each destination
         for destination in &mut self.destinations {
             let matches_filter = destination
@@ -227,6 +241,7 @@ impl Broadcaster {
                 BroadcastAction::Commit => None,
                 BroadcastAction::Ignore => continue,
             };
+            advanced = true;
             if let Some(message) = broadcast_message {
                 Self::check_continuity(destination, &message).context(format!(
                     "refusing to publish to destination {}",
@@ -300,7 +315,10 @@ impl Broadcaster {
                     ))?;
             }
         }
-        Ok(destinations)
+        Ok(Broadcast {
+            published_to: destinations,
+            advanced,
+        })
     }
 
     pub async fn repair(&mut self) -> Result<()> {

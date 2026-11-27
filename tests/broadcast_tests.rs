@@ -90,7 +90,8 @@ async fn broadcast_does_not_write_the_last_seen_point_again() {
     .await
     .expect("the broadcast must not wait on AWS")
     .expect("broadcast failed");
-    assert!(published.is_empty());
+    assert!(published.published_to.is_empty());
+    assert!(!published.advanced);
 }
 
 #[tokio::test]
